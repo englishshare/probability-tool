@@ -13,20 +13,26 @@ function collectAtoms(node, out) {
   return out;
 }
 
-function computeMinterms(atomNames, ctx) {
+// Probability of each of the 2^n regions of the given sets. The linear model
+// (linear.js) is asked first -- it pins down every region the facts imply in
+// any direction -- and whatever it cannot determine falls back to the
+// rule-based solver. One solver (hence one cache) is shared across all
+// regions instead of building a fresh one per region, which threw away
+// every sub-result each region had in common with the others.
+function computeMinterms(atomNames, ctx, model) {
   const names = [...atomNames];
   const n = names.length;
+  const lin = model === undefined ? buildLinearModel(ctx, names) : model;
+  const shared = makeSolver();
   const regions = [];
   for (let mask = 0; mask < (1 << n); mask++) {
     const args = names.map((name, idx) => {
       const atomNode = { type: 'ATOM', name };
-      const inside = (mask >> idx) & 1;
-      return inside ? atomNode : { type: 'COMPLEMENT', arg: atomNode };
+      return ((mask >> idx) & 1) ? atomNode : { type: 'COMPLEMENT', arg: atomNode };
     });
     const node = n === 0 ? { type: 'UNIVERSE' } : flatten({ type: 'INTERSECT', args });
-    const { solve } = makeSolver();
-    const r = solve(node, ctx, null);
-    regions.push({ mask, numeric: r.numeric });
+    const det = lin ? lin.valueOf(node) : null;
+    regions.push({ mask, numeric: det ? det.value : shared.solve(node, ctx, null).numeric });
   }
   return { names, regions };
 }
@@ -74,7 +80,7 @@ function regionVal(regions, pattern) {
 function renderVenn1(names, regions, colorOf) {
   const val = a => fmtRegion(regionVal(regions, [a]));
   const c = colorOf(names[0]);
-  return `<svg viewBox="0 0 360 300" xmlns="http://www.w3.org/2000/svg" font-family="Georgia, serif">
+  return `<svg viewBox="0 0 360 300" xmlns="http://www.w3.org/2000/svg" font-family="Cambria, 'Palatino Linotype', 'Noto Serif', 'Times New Roman', serif">
     <rect x="10" y="10" width="340" height="280" rx="14" fill="none" stroke="var(--border)" stroke-width="2"/>
     <circle cx="180" cy="150" r="105" fill="${c}" fill-opacity="0.3" stroke="${c}" stroke-width="2.5"/>
     <text x="46" y="40" font-size="14" fill="var(--text)">Ngoài ${names[0]}: ${val(false)}</text>
@@ -86,7 +92,7 @@ function renderVenn1(names, regions, colorOf) {
 function renderVenn2(names, regions, colorOf) {
   const ca = colorOf(names[0]), cb = colorOf(names[1]);
   const val = (a, b) => fmtRegion(regionVal(regions, [a, b]));
-  return `<svg viewBox="0 0 440 320" xmlns="http://www.w3.org/2000/svg" font-family="Georgia, serif">
+  return `<svg viewBox="0 0 440 320" xmlns="http://www.w3.org/2000/svg" font-family="Cambria, 'Palatino Linotype', 'Noto Serif', 'Times New Roman', serif">
     <rect x="10" y="10" width="420" height="300" rx="14" fill="none" stroke="var(--border)" stroke-width="2"/>
     <circle cx="175" cy="160" r="110" fill="${ca}" fill-opacity="0.32" stroke="${ca}" stroke-width="2.5"/>
     <circle cx="275" cy="160" r="110" fill="${cb}" fill-opacity="0.32" stroke="${cb}" stroke-width="2.5"/>
@@ -102,7 +108,7 @@ function renderVenn2(names, regions, colorOf) {
 function renderVenn3(names, regions, colorOf) {
   const [ca, cb, cc] = names.map(colorOf);
   const val = (a, b, c) => fmtRegion(regionVal(regions, [a, b, c]));
-  return `<svg viewBox="0 0 460 400" xmlns="http://www.w3.org/2000/svg" font-family="Georgia, serif">
+  return `<svg viewBox="0 0 460 400" xmlns="http://www.w3.org/2000/svg" font-family="Cambria, 'Palatino Linotype', 'Noto Serif', 'Times New Roman', serif">
     <rect x="10" y="10" width="440" height="380" rx="14" fill="none" stroke="var(--border)" stroke-width="2"/>
     <circle cx="190" cy="170" r="115" fill="${ca}" fill-opacity="0.28" stroke="${ca}" stroke-width="2.5"/>
     <circle cx="290" cy="170" r="115" fill="${cb}" fill-opacity="0.28" stroke="${cb}" stroke-width="2.5"/>
@@ -139,7 +145,7 @@ function renderVenn4(names, regions, colorOf) {
     return { cx: -VENN4_D * Math.sin(th), cy: VENN4_D * Math.cos(th), thetaDeg: deg };
   });
   const colors = names.map(colorOf);
-  let svg = `<svg viewBox="0 0 ${SHIFT * 2} ${SHIFT * 2}" xmlns="http://www.w3.org/2000/svg" font-family="Georgia, serif">`;
+  let svg = `<svg viewBox="0 0 ${SHIFT * 2} ${SHIFT * 2}" xmlns="http://www.w3.org/2000/svg" font-family="Cambria, 'Palatino Linotype', 'Noto Serif', 'Times New Roman', serif">`;
   svg += `<rect x="10" y="10" width="${SHIFT * 2 - 20}" height="${SHIFT * 2 - 20}" rx="16" fill="none" stroke="var(--border)" stroke-width="2"/>`;
   ellipses.forEach((e, i) => {
     svg += `<ellipse cx="${e.cx + SHIFT}" cy="${e.cy + SHIFT}" rx="${VENN4_A}" ry="${VENN4_B}" transform="rotate(${e.thetaDeg} ${e.cx + SHIFT} ${e.cy + SHIFT})" fill="${colors[i]}" fill-opacity="0.25" stroke="${colors[i]}" stroke-width="2.5"/>`;

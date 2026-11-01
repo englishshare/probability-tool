@@ -45,7 +45,11 @@ function renderTemplates(canvasFactory) {
   const variants = [];
   for (const f of UPRIGHT_FONTS) for (const s of TEMPLATE_SHEARS) variants.push({ font: f, shear: s });
   for (const f of ITALIC_FONTS) variants.push({ font: f, shear: 0 });
-  for (const ch of ALPHABET) {
+  // Typeset math draws union and intersection as the real symbols, not as the
+  // letters U / n, so those glyphs get templates too -- each emitting the
+  // plain-text operator this tool's syntax uses for it.
+  const sources = ALPHABET.map(c => ({ ch: c, glyph: c })).concat([{ ch: 'U', glyph: '\u222A' }, { ch: 'n', glyph: '\u2229' }]);
+  for (const { ch, glyph } of sources) {
     for (const v of variants) {
       wctx.setTransform(1, 0, 0, 1, 0, 0);
       wctx.fillStyle = '#fff'; wctx.fillRect(0, 0, SIZE, SIZE);
@@ -53,7 +57,7 @@ function renderTemplates(canvasFactory) {
       // right-leaning shear about the baseline, synthesizing an italic-ish
       // slant on top of the upright fonts for in-between coverage
       wctx.setTransform(1, 0, -v.shear, 1, v.shear * BASE, 0);
-      wctx.fillText(ch, 14, BASE);
+      wctx.fillText(glyph, 14, BASE);
       wctx.setTransform(1, 0, 0, 1, 0, 0);
       const bbox = inkBBox(wctx.getImageData(0, 0, SIZE, SIZE).data, SIZE, SIZE);
       if (!bbox) continue;
@@ -253,20 +257,41 @@ function refineRowBands(canvas, rows) {
 // picked out). Once a line's row band is known, its own polarity is
 // re-derived from just those rows, full width, rather than reusing the
 // whole-image decision.
-function buildLocalInkTester(canvas, top, bottom) {
+// Two notions of "ink" for one line, both decided from just that line's rows.
+// STRONG ink is clearly dark (or, on a dark background, clearly light) -- the
+// body of each stroke. WEAK ink also takes in the anti-aliased fringe and the
+// hairline strokes of high-contrast serif faces (the thin diagonal of a "2",
+// the join in a "3"), which at screen resolution come out lighter than the
+// strong cut-off and would otherwise snap one glyph into disconnected pieces.
+// Where the cut-off for "weak" sits depends on how far the background is from
+// the strong threshold, so it works for white, grey and dark pages alike.
+function buildLocalInk(canvas, top, bottom) {
   const w = canvas.width;
   const h = bottom - top + 1;
-  const ctx = canvas.getContext('2d');
-  const data = ctx.getImageData(0, top, w, h).data;
+  const data = canvas.getContext('2d').getImageData(0, top, w, h).data;
   const inverted = detectPolarity(data, w, h) === 'inverted';
-  return (x, y) => {
+  const hist = new Uint32Array(256);
+  for (let p = 0; p < w * h; p++) {
+    const i = p * 4;
+    hist[Math.round((data[i] + data[i + 1] + data[i + 2]) / 3)]++;
+  }
+  let bg = inverted ? 0 : 255, most = -1;
+  for (let g = 0; g < 256; g++) {
+    if ((inverted ? g < 128 : g >= 128) && hist[g] > most) { most = hist[g]; bg = g; }
+  }
+  const weakT = inverted ? 128 - 0.6 * (128 - bg) : 128 + 0.6 * (bg - 128);
+  const grayAt = (x, y) => {
     const ly = y - top;
-    if (ly < 0 || ly >= h || x < 0 || x >= w) return false;
+    if (ly < 0 || ly >= h || x < 0 || x >= w) return null;
     const i = (ly * w + x) * 4;
-    const gray = (data[i] + data[i + 1] + data[i + 2]) / 3;
-    return inverted ? gray >= 128 : gray < 128;
+    return (data[i] + data[i + 1] + data[i + 2]) / 3;
+  };
+  return {
+    strong: (x, y) => { const g = grayAt(x, y); return g !== null && (inverted ? g >= 128 : g < 128); },
+    weak: (x, y) => { const g = grayAt(x, y); return g !== null && (inverted ? g >= weakT : g < weakT); },
   };
 }
+function buildLocalInkTester(canvas, top, bottom) { return buildLocalInk(canvas, top, bottom).strong; }
 
 // Math text is conventionally italic, and a slant makes column-projection
 // segmentation (find x-gaps, cut there) unreliable: two neighbouring
@@ -306,7 +331,7 @@ function labelComponents(isInk, w, top, bottom) {
       comps.push(comp);
     }
   }
-  return { labels, comps, w, h };
+  return { labels, comps, w, h, top };
 }
 
 function medianOf(arr) {
@@ -352,15 +377,49 @@ function buildGlyphGroups(comps) {
   }
 
   const rest = comps.filter(c => !barIds.has(c.id));
+
+  // Fine serif faces draw the thin join of a "2", "3" or "5" so lightly that at
+  // screen size it drops out and the heavy base comes loose as a flat sliver.
+  // A flat piece sitting in the lower part of a tall component, inside its
+  // horizontal span and not far below it, is that base: re-attach it. (An "="
+  // never qualifies -- it sits beside its neighbours, not under one -- and an
+  // overline sits above, which was already claimed as a bar.)
+  const extras = new Map(), attached = new Set(), repaired = new Set();
+  for (const f of rest) {
+    if (!isFlat(f)) continue;
+    const host = rest.find(h => h !== f && isTall(h) && !attached.has(h.id)
+      && xOverlap(f, h) >= 0.7 * W(f) && W(f) >= 0.35 * W(h)
+      && f.minY >= h.minY + 0.5 * H(h) && f.minY - h.maxY <= 0.6 * H(h));
+    if (host) { attached.add(f.id); (extras.get(host.id) || extras.set(host.id, []).get(host.id)).push(f); repaired.add(host.id); }
+  }
+
+  // Slashed or dotted zeros (code and monospace faces) leave a mark sitting
+  // in the middle of the ring. A small component centred well inside another
+  // component's box is part of that glyph, not a glyph of its own -- unlike a
+  // prime or a period, which sit at the edge or beside, never in the middle.
+  for (const f of rest) {
+    if (attached.has(f.id) || H(f) > 0.5 * refH) continue;
+    const host = rest.find(h => h !== f && !attached.has(h.id) && H(h) >= 0.6 * refH && W(h) >= 2 * W(f)
+      && f.minX >= h.minX && f.maxX <= h.maxX && f.minY >= h.minY && f.maxY <= h.maxY
+      && Math.abs(cxOf(f) - cxOf(h)) <= 0.25 * W(h) && Math.abs((f.minY + f.maxY) / 2 - (h.minY + h.maxY) / 2) <= 0.25 * H(h));
+    if (host) { attached.add(f.id); (extras.get(host.id) || extras.set(host.id, []).get(host.id)).push(f); }
+  }
+
   const used = new Set();
   const groups = [];
   for (const a of rest) {
-    if (used.has(a.id)) continue;
+    if (used.has(a.id) || attached.has(a.id)) continue;
     used.add(a.id);
+    if (extras.has(a.id)) {
+      const g = makeGlyphGroup([a, ...extras.get(a.id)]);
+      g.repair = repaired.has(a.id);
+      groups.push(g);
+      continue;
+    }
     if (isFlat(a)) {
       let partner = null;
       for (const b of rest) {
-        if (b === a || used.has(b.id) || !isFlat(b)) continue;
+        if (b === a || used.has(b.id) || attached.has(b.id) || !isFlat(b)) continue;
         const gap = Math.max(a.minY, b.minY) - Math.min(a.maxY, b.maxY) - 1;
         if (xOverlap(a, b) >= 0.6 * Math.min(W(a), W(b)) && gap <= refH * 0.6
           && Math.abs(W(a) - W(b)) <= 0.5 * Math.max(W(a), W(b))) { partner = b; break; }
@@ -393,15 +452,47 @@ function buildGlyphGroups(comps) {
   return groups;
 }
 
-function glyphBitmap(info, group, canvasFactory) {
+// Pixels of one glyph. A glyph that had a detached piece re-attached also
+// regrows, through weak (faint) ink inside its own box, the hairline stroke that
+// joined the pieces -- otherwise it would be matched with a gap where the
+// stroke should be. Other glyphs use their strong pixels only.
+function glyphMembers(info, group, weak) {
+  const members = new Set();
   const bw = group.maxX - group.minX + 1, bh = group.maxY - group.minY + 1;
+  const inBox = (x, y) => x >= group.minX && x <= group.maxX && y >= group.minY && y <= group.maxY;
+  const stack = [];
+  for (let y = group.minY; y <= group.maxY; y++) {
+    for (let x = group.minX; x <= group.maxX; x++) {
+      if (group.ids.has(info.labels[y * info.w + x])) { members.add(y * info.w + x); if (group.repair && weak) stack.push(x, y); }
+    }
+  }
+  if (group.repair && weak) {
+    while (stack.length) {
+      const cy = stack.pop(), cx = stack.pop();
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = cx + dx, ny = cy + dy;
+          if (!inBox(nx, ny)) continue;
+          const idx = ny * info.w + nx;
+          if (members.has(idx) || info.labels[idx] !== 0 || !weak(nx, ny + info.top)) continue;
+          members.add(idx);
+          stack.push(nx, ny);
+        }
+      }
+    }
+  }
+  return { members, bw, bh };
+}
+
+function glyphBitmap(info, group, canvasFactory, weak) {
+  const { members, bw, bh } = glyphMembers(info, group, weak);
   const tmp = canvasFactory(bw, bh);
   const tctx = tmp.getContext('2d');
   const img = tctx.createImageData(bw, bh);
   for (let i = 0; i < img.data.length; i += 4) { img.data[i] = img.data[i + 1] = img.data[i + 2] = 255; img.data[i + 3] = 255; }
   for (let y = group.minY; y <= group.maxY; y++) {
     for (let x = group.minX; x <= group.maxX; x++) {
-      if (group.ids.has(info.labels[y * info.w + x])) {
+      if (members.has(y * info.w + x)) {
         const j = ((y - group.minY) * bw + (x - group.minX)) * 4;
         img.data[j] = img.data[j + 1] = img.data[j + 2] = 0;
       }
@@ -467,20 +558,181 @@ function disambiguateDigits(text) {
 
 const VALUE_CHARS = new Set('0123456789.'.split(''));
 
+// Per-row ink extent of a glyph: for every row it covers, the leftmost and
+// rightmost ink column and the ink centroid.
+function glyphRowProfile(info, group) {
+  const rows = [];
+  for (let y = group.minY; y <= group.maxY; y++) {
+    let lo = Infinity, hi = -Infinity, sum = 0, n = 0;
+    for (let x = group.minX; x <= group.maxX; x++) {
+      if (group.ids.has(info.labels[y * info.w + x])) { if (x < lo) lo = x; if (x > hi) hi = x; sum += x; n++; }
+    }
+    if (n) rows.push({ lo, hi, cx: sum / n });
+  }
+  return rows;
+}
+const meanOf = a => a.reduce((p, q) => p + q, 0) / (a.length || 1);
+
+// Signed bulge of a thin vertical glyph, as a fraction of its height: how far
+// the middle third sits from the straight line through its ends. Any uniform
+// slant cancels out, so a slanted bar scores ~0 while "(" bulges left (< 0) and
+// ")" right (> 0). Squeezed into the shared 32x32 box a shallow thin arc looks
+// almost exactly like "|", which is why the shape match alone cannot be trusted
+// to tell them apart; this can.
+function glyphCurvature(rows) {
+  if (rows.length < 9) return 0;
+  const t = Math.floor(rows.length / 3);
+  const top = meanOf(rows.slice(0, t).map(r => r.cx)), bottom = meanOf(rows.slice(-t).map(r => r.cx));
+  const mid = meanOf(rows.slice(t, rows.length - t).map(r => r.cx));
+  return (mid - (top + bottom) / 2) / rows.length;
+}
+
+// Roughness of the left edge over the central rows (RMS distance from the
+// best straight line, relative to glyph width). A "B" has a straight stem on
+// its left, upright or slanted; an "8" curves in at the waist. They are the
+// classic confusable pair in italic math type.
+function leftEdgeRoughness(rows, width) {
+  const a = rows.slice(Math.floor(rows.length * 0.15), Math.ceil(rows.length * 0.85));
+  if (a.length < 6 || !width) return 0;
+  const n = a.length, ys = a.map((_, i) => i), xs = a.map(r => r.lo);
+  const my = meanOf(ys), mx = meanOf(xs);
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++) { num += (ys[i] - my) * (xs[i] - mx); den += (ys[i] - my) * (ys[i] - my); }
+  const slope = den ? num / den : 0;
+  const rms = Math.sqrt(meanOf(xs.map((x, i) => { const r = x - (mx + slope * (ys[i] - my)); return r * r; })));
+  return rms / width;
+}
+
+// ---- touching glyphs ------------------------------------------------------
+// Tight serif and italic type often makes neighbouring letters touch, and
+// touching ink is a single component. A group much wider than the typical
+// glyph on its line is a candidate: cut it at the thinnest column near its
+// middle, and keep the cut only if the two halves are each recognized
+// clearly better than the unsplit blob was (a genuine "W" or "M" is wide too,
+// but matches its own template well and so is left alone).
+function bestScoreOf(rank) { let b = Infinity; for (const v of rank.values()) if (v < b) b = v; return b; }
+
+function splitTouching(info, groups, ink, canvasFactory, templates) {
+  const tallest = () => Math.max(...groups.map(g => g.maxY - g.minY + 1));
+  const typicalWidth = () => {
+    const maxH = tallest();
+    return medianOf(groups.filter(g => {
+      const h = g.maxY - g.minY + 1, w = g.maxX - g.minX + 1;
+      return h >= 0.6 * maxH && w / h >= 0.4 && w / h <= 1.3;
+    }).map(g => g.maxX - g.minX + 1));
+  };
+  const scoreOf = g => bestScoreOf(rankGlyph(glyphBitmap(info, g, canvasFactory, ink.weak), g, templates));
+  const boxOf = (id, region) => {
+    const c = { id, minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, area: 0 };
+    for (let y = region.minY; y <= region.maxY; y++) for (let x = region.minX; x <= region.maxX; x++) {
+      if (info.labels[y * info.w + x] === id) { c.area++; if (x < c.minX) c.minX = x; if (x > c.maxX) c.maxX = x; if (y < c.minY) c.minY = y; if (y > c.maxY) c.maxY = y; }
+    }
+    return c;
+  };
+  let nextId = 1 + Math.max(0, ...info.comps.map(c => c.id));
+  for (let pass = 0; pass < 8; pass++) {
+    const medW = typicalWidth(), maxH = tallest();
+    if (!medW) break;
+    let did = false;
+    for (let gi = 0; gi < groups.length && !did; gi++) {
+      const g = groups[gi];
+      const w = g.maxX - g.minX + 1, h = g.maxY - g.minY + 1;
+      // Two letters side by side are about as wide as they are tall or wider;
+      // a single capital (even "A", "D", "M") stays under ~1.3x its height.
+      // Without this gate, an ordinary wide letter could be cut in half.
+      if (g.ids.size !== 1 || g.repair || w < 1.45 * medW || w / h < 1.5 || h < 0.55 * maxH) continue;
+      const [origId] = g.ids;
+      const colInk = [];
+      for (let x = g.minX; x <= g.maxX; x++) {
+        let n = 0;
+        for (let y = g.minY; y <= g.maxY; y++) if (info.labels[y * info.w + x] === origId) n++;
+        colInk.push(n);
+      }
+      const lo = Math.floor(w * 0.3), hi = Math.ceil(w * 0.7), mid = w / 2;
+      let cut = -1;
+      for (let i = lo; i <= hi; i++) if (cut < 0 || colInk[i] < colInk[cut] || (colInk[i] === colInk[cut] && Math.abs(i - mid) < Math.abs(cut - mid))) cut = i;
+      if (cut < 0 || colInk[cut] > 0.6 * Math.max(...colInk)) continue;
+      const cutX = g.minX + cut;
+      const moved = [];
+      const rid = nextId++;
+      for (let y = g.minY; y <= g.maxY; y++) for (let x = cutX + 1; x <= g.maxX; x++) {
+        const idx = y * info.w + x;
+        if (info.labels[idx] === origId) { info.labels[idx] = rid; moved.push(idx); }
+      }
+      const left = makeGlyphGroup([boxOf(origId, g)]), right = makeGlyphGroup([boxOf(rid, g)]);
+      if (!moved.length || !isFinite(left.minX) || !isFinite(right.minX)) { moved.forEach(i => { info.labels[i] = origId; }); continue; }
+      const whole = scoreOf(g), sl = scoreOf(left), sr = scoreOf(right);
+      if (whole > 0.012 && (sl + sr) / 2 < whole * 0.7) {
+        if (g.suffix.includes("'") && !g.prefix) { left.prefix = '('; right.suffix = ")'"; } else { left.prefix = g.prefix; right.suffix = g.suffix; }
+        groups.splice(gi, 1, left, right);
+        did = true;
+      } else {
+        moved.forEach(i => { info.labels[i] = origId; });
+      }
+    }
+    if (!did) break;
+  }
+  groups.sort((p, q) => p.cx - q.cx);
+  return groups;
+}
+
+const SET_LETTER = ch => /^[A-Z]$/.test(ch) && ch !== 'U';
+
 function recognizeOneBand(canvas, top, bottom, templates, canvasFactory) {
-  const localIsInk = buildLocalInkTester(canvas, top, bottom);
-  const info = labelComponents(localIsInk, canvas.width, top, bottom);
-  const groups = buildGlyphGroups(info.comps);
-  const ranks = groups.map(g => rankGlyph(glyphBitmap(info, g, canvasFactory), g, templates));
+  const ink = buildLocalInk(canvas, top, bottom);
+  const info = labelComponents(ink.strong, canvas.width, top, bottom);
+  const groups = splitTouching(info, buildGlyphGroups(info.comps), ink, canvasFactory, templates);
+  const ranks = groups.map(g => rankGlyph(glyphBitmap(info, g, canvasFactory, ink.weak), g, templates));
   const chars = ranks.map(r => pickBest(r));
+  const lastEq = chars.lastIndexOf('=');
+  const exprEnd = lastEq === -1 ? chars.length : lastEq;
+
+  // Reference geometry from the letters on this line.
+  const letterIdx = chars.map((c, i) => (SET_LETTER(c) ? i : -1)).filter(i => i >= 0);
+  const capTop = medianOf(letterIdx.map(i => groups[i].minY)), capBottom = medianOf(letterIdx.map(i => groups[i].maxY));
+  const capH = letterIdx.length ? capBottom - capTop + 1 : 0;
+
+  // Within the expression itself (before the last "="):
+  for (let i = 0; i < exprEnd; i++) {
+    const g = groups[i];
+    const rows = glyphRowProfile(info, g);
+    // "(" and ")" differ from "|" by a gentle bulge; the match score alone
+    // cannot see it (see glyphCurvature), so decide by the bulge itself.
+    if (chars[i] === '|' || chars[i] === '(' || chars[i] === ')') {
+      const k = glyphCurvature(rows);
+      if (Math.abs(k) >= 0.04) chars[i] = k < 0 ? '(' : ')';
+    }
+    // An apostrophe and a comma are the same little wedge; only where it sits
+    // tells them apart -- up beside the letter's top, or down on the baseline.
+    if ((chars[i] === "'" || chars[i] === ',') && capH) {
+      const cy = (g.minY + g.maxY) / 2;
+      chars[i] = cy < (capTop + capBottom) / 2 ? "'" : ',';
+    }
+    // In sans-serif type "|" and a capital "I" are the same bar; the bar used
+    // for a condition runs from above the capitals to below the baseline, a
+    // capital "I" only as tall as its neighbours.
+    if ((chars[i] === 'I' || chars[i] === '|') && capH && (g.maxY - g.minY + 1) >= 1.12 * capH) chars[i] = '|';
+    // A digit is only meaningful in a set name right after its letter ("B1",
+    // "B12"). Anywhere else in an expression it is a misread letter, so take
+    // the best letter instead; and an "8" that has a straight left stem is
+    // really a "B", which the two glyphs' similar outlines make easy to miss.
+    if (/[0-9]/.test(chars[i])) {
+      const afterName = i > 0 && /[A-Z0-9]/.test(chars[i - 1]);
+      if (!afterName) chars[i] = pickBest(ranks[i], SET_LETTER) || chars[i];
+      else if (chars[i] === '8' && leftEdgeRoughness(rows, g.maxX - g.minX + 1) < 0.045) chars[i] = 'B';
+    }
+  }
   // What follows the last "=" is a number, so only digits and a decimal
   // point are plausible there -- a letter in that spot ("2" read as "D",
   // a "0" as "Q") is a misread by construction, and re-picking among just
   // the numeric glyphs repairs it using the shape evidence already
   // computed rather than leaving the person to spot it.
-  const lastEq = chars.lastIndexOf('=');
   if (lastEq !== -1) {
-    for (let i = lastEq + 1; i < chars.length; i++) chars[i] = pickBest(ranks[i], ch => VALUE_CHARS.has(ch));
+    // "," is allowed here too: Vietnamese writes decimals with a comma ("0,375").
+    for (let i = lastEq + 1; i < chars.length; i++) {
+      const c = pickBest(ranks[i], ch => VALUE_CHARS.has(ch) || ch === ',');
+      chars[i] = c === ',' ? '.' : c;
+    }
   }
   let out = '';
   groups.forEach((g, i) => { out += g.prefix + chars[i] + g.suffix; });

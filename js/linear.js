@@ -1,0 +1,341 @@
+/* ============================================================
+   LINEAR: inference over the 2^n elementary regions (minterms)
+
+   The rule-based solver reasons top-down: to find P(A∪B) it asks for
+   P(A), P(B), P(A∩B). It cannot run a rule backwards, so given P(A), P(B)
+   and P(A∪B) it has no way to get P(A∩B). The fix is to stop treating the
+   facts as rules and treat them as what they are: linear equations over
+   the probabilities x_m of the elementary regions m (which of A, B, C...
+   an outcome belongs to):
+
+       P(E)      = sum of x_m over regions m inside E
+       P(E|F)=c  =>  P(E∩F) - c*P(F) = 0
+       mutually exclusive A, B  =>  P(A∩B) = 0
+       partition B1..Bk         =>  P(Bi∩Bj) = 0 and P(B1∪..∪Bk) = 1
+       independent A, B, ...    =>  P(∩S) = prod P(.)  (once those are known)
+
+   Row-reducing that system (Gaussian elimination) answers, exactly, every
+   question the facts determine -- in any direction -- and exposes
+   contradictions: an equation 0 = 1, or a region forced to a negative
+   probability. A query is determined iff its indicator vector lies in the
+   row space; the coefficients of that combination are also what makes an
+   explanation possible ("P(A∩B) = P(A) + P(B) - P(A∪B)").
+   ============================================================ */
+
+const MAX_LINEAR_ATOMS = 12;
+const LIN_TOL = 1e-9;
+
+// Inverse of canonicalKey (algebra.js): lets a fact stored by key be turned
+// back into a set expression.
+function parseCanonicalKey(key) {
+  let i = 0;
+  function expr() {
+    const c = key[i];
+    if (c === '~') { i++; return { type: 'COMPLEMENT', arg: expr() }; }
+    if (c === '(') {
+      i++;
+      const args = [expr()];
+      let op = null;
+      while (key[i] === '∪' || key[i] === '∩') { op = key[i]; i++; args.push(expr()); }
+      if (key[i] !== ')') throw new Error('bad key: ' + key);
+      i++;
+      return op ? { type: op === '∪' ? 'UNION' : 'INTERSECT', args } : args[0];
+    }
+    if (c === '∅') { i++; return { type: 'EMPTY' }; }
+    if (c === 'Ω') { i++; return { type: 'UNIVERSE' }; }
+    let j = i;
+    while (j < key.length && '()∪∩~|'.indexOf(key[j]) === -1) j++;
+    if (j === i) throw new Error('bad key: ' + key);
+    const name = key.slice(i, j); i = j;
+    return { type: 'ATOM', name };
+  }
+  const a = expr();
+  if (key[i] === '|') { i++; const b = expr(); return { type: 'COND', arg: a, given: b }; }
+  if (i !== key.length) throw new Error('bad key: ' + key);
+  return a;
+}
+
+function evalAtMask(node, idx, mask) {
+  switch (node.type) {
+    case 'ATOM': return ((mask >> idx[node.name]) & 1) === 1;
+    case 'EMPTY': return false;
+    case 'UNIVERSE': return true;
+    case 'COMPLEMENT': return !evalAtMask(node.arg, idx, mask);
+    case 'UNION': return node.args.some(a => evalAtMask(a, idx, mask));
+    case 'INTERSECT': return node.args.every(a => evalAtMask(a, idx, mask));
+    default: return false;
+  }
+}
+
+function indicatorVector(node, idx, N) {
+  const v = new Float64Array(N);
+  for (let m = 0; m < N; m++) v[m] = evalAtMask(node, idx, m) ? 1 : 0;
+  return v;
+}
+
+// Incrementally maintained reduced row-echelon form. Each stored row also
+// carries `comb`: how it was built from the ORIGINAL equations, which is
+// what turns "this query is determined" into "...because of these facts".
+class LinearSystem {
+  constructor(N) { this.N = N; this.rows = []; this.origin = []; this.conflict = null; }
+
+  add(vec, rhs, meta) {
+    const k = this.origin.length;
+    this.origin.push(meta);
+    const v = Float64Array.from(vec);
+    let b = rhs;
+    const comb = new Array(k + 1).fill(0); comb[k] = 1;
+    for (const r of this.rows) {
+      const c = v[r.pivot];
+      if (Math.abs(c) > LIN_TOL) {
+        for (let j = 0; j < this.N; j++) v[j] -= c * r.vec[j];
+        b -= c * r.rhs;
+        for (let t = 0; t < r.comb.length; t++) comb[t] -= c * r.comb[t];
+      }
+    }
+    let pivot = -1, best = LIN_TOL;
+    for (let j = 0; j < this.N; j++) if (Math.abs(v[j]) > best) { best = Math.abs(v[j]); pivot = j; }
+    if (pivot === -1) {
+      if (Math.abs(b) > 1e-7 && !this.conflict) {
+        this.conflict = { meta, involved: comb.map((c, t) => ({ c, t })).filter(x => Math.abs(x.c) > LIN_TOL && x.t !== k).map(x => this.origin[x.t]) };
+      }
+      return false;
+    }
+    const p = v[pivot];
+    for (let j = 0; j < this.N; j++) v[j] /= p;
+    b /= p;
+    for (let t = 0; t < comb.length; t++) comb[t] /= p;
+    for (const r of this.rows) {
+      const c = r.vec[pivot];
+      if (Math.abs(c) > LIN_TOL) {
+        for (let j = 0; j < this.N; j++) r.vec[j] -= c * v[j];
+        r.rhs -= c * b;
+        while (r.comb.length < comb.length) r.comb.push(0);
+        for (let t = 0; t < comb.length; t++) r.comb[t] -= c * comb[t];
+      }
+    }
+    this.rows.push({ vec: v, rhs: b, comb, pivot });
+    return true;
+  }
+
+  // P(Q) for an event with indicator q, if the facts determine it
+  determine(q) {
+    const v = Float64Array.from(q);
+    let value = 0;
+    const comb = new Array(this.origin.length).fill(0);
+    for (const r of this.rows) {
+      const c = v[r.pivot];
+      if (Math.abs(c) > LIN_TOL) {
+        for (let j = 0; j < this.N; j++) v[j] -= c * r.vec[j];
+        value += c * r.rhs;
+        for (let t = 0; t < r.comb.length; t++) comb[t] += c * r.comb[t];
+      }
+    }
+    for (let j = 0; j < this.N; j++) if (Math.abs(v[j]) > 1e-7) return null;
+    return { value, comb };
+  }
+
+  // regions whose own probability is pinned down by the equations alone
+  determinedRegions() {
+    const out = [];
+    for (const r of this.rows) {
+      let alone = true;
+      for (let j = 0; j < this.N; j++) if (j !== r.pivot && Math.abs(r.vec[j]) > 1e-7) { alone = false; break; }
+      if (alone) out.push({ mask: r.pivot, value: r.rhs, comb: r.comb });
+    }
+    return out;
+  }
+}
+
+function regionLabel(names, mask) {
+  return names.map((nm, i) => (((mask >> i) & 1) ? nm : nm + "'")).join(' ∩ ');
+}
+
+function factLabel(node, value) {
+  if (node.type === 'COND') return 'P(' + exprToText(node.arg) + ' | ' + exprToText(node.given) + ') = ' + fmtNum(value);
+  return 'P(' + exprToText(node) + ') = ' + fmtNum(value);
+}
+
+// Builds the system for a context (the same {knownProb, independentGroups,
+// mutexPairs, partition} the rule-based solver reads). Returns null when
+// there are too many sets for a 2^n table, otherwise a model that answers
+// valueOf(event) and reports `problem` if the facts cannot all hold.
+function buildLinearModel(ctx, extraAtoms) {
+  const atoms = new Set(extraAtoms || []);
+  const facts = [];
+  for (const [key, value] of ctx.knownProb) {
+    try { const node = parseCanonicalKey(key); facts.push({ node, value }); collectAtoms(node, atoms); } catch (e) { /* skip unreadable key */ }
+  }
+  const mutex = [];
+  for (const pk of ctx.mutexPairs || []) {
+    try { const [k1, k2] = pk.split(' ~ '); const a = parseCanonicalKey(k1), b = parseCanonicalKey(k2); mutex.push([a, b]); collectAtoms(a, atoms); collectAtoms(b, atoms); } catch (e) { /* skip */ }
+  }
+  const groups = [];
+  for (const g of ctx.independentGroups || []) {
+    try { const nodes = [...g].map(parseCanonicalKey); nodes.forEach(n => collectAtoms(n, atoms)); groups.push(nodes); } catch (e) { /* skip */ }
+  }
+  const partition = ctx.partition && ctx.partition.length ? ctx.partition.map(nm => ({ type: 'ATOM', name: nm })) : null;
+  if (partition) partition.forEach(p => atoms.add(p.name));
+
+  const names = [...atoms].sort();
+  const n = names.length;
+  if (n === 0 || n > MAX_LINEAR_ATOMS) return null;
+  const N = 1 << n;
+  const idx = {}; names.forEach((nm, i) => { idx[nm] = i; });
+  const ind = node => indicatorVector(flatten(node), idx, N);
+  const and = (a, b) => ({ type: 'INTERSECT', args: [a, b] });
+  const sys = new LinearSystem(N);
+
+  sys.add(new Float64Array(N).fill(1), 1, { kind: 'norm', label: 'tổng xác suất của mọi vùng bằng 1' });
+  for (const f of facts) {
+    if (f.node.type === 'COND') {
+      const num = ind(and(f.node.arg, f.node.given)), den = ind(f.node.given);
+      const row = new Float64Array(N);
+      for (let m = 0; m < N; m++) row[m] = num[m] - f.value * den[m];
+      sys.add(row, 0, { kind: 'cond', label: factLabel(f.node, f.value) });
+    } else {
+      sys.add(ind(f.node), f.value, { kind: 'fact', node: f.node, value: f.value, label: factLabel(f.node, f.value) });
+    }
+  }
+  for (const [a, b] of mutex) {
+    sys.add(ind(and(a, b)), 0, { kind: 'mutex', label: exprToText(a) + ' và ' + exprToText(b) + ' xung khắc' });
+  }
+  if (partition) {
+    const plabel = '{' + partition.map(p => p.name).join(', ') + '}';
+    for (let i = 0; i < partition.length; i++) {
+      for (let j = i + 1; j < partition.length; j++) {
+        sys.add(ind(and(partition[i], partition[j])), 0, { kind: 'partition', label: partition[i].name + ' và ' + partition[j].name + ' không giao nhau (phân hoạch ' + plabel + ')' });
+      }
+    }
+    sys.add(ind({ type: 'UNION', args: partition }), 1, { kind: 'partition', label: 'phân hoạch ' + plabel + ' phủ kín không gian mẫu' });
+  }
+
+  // Independence is a product of probabilities, so it only becomes a linear
+  // equation once the factors are known; keep adding equations as more of
+  // them become determined, until nothing new appears. Mutual independence of
+  // g sets means 2^g - g - 1 product equations, and dense elimination over
+  // that many rows is quadratic in 2^g -- seconds at g = 10. Past
+  // FULL_INDEP_MAX sets only the small subsets (pairs and triples) are
+  // expanded; the rule-based solver, which handles independence by formula,
+  // still covers the big groups, so only the *reverse* inference from such a
+  // group gets weaker, not the answers.
+  const FULL_INDEP_MAX = 8, BIG_GROUP_SUBSET = 3;
+  const pending = [];
+  for (const nodes of groups) {
+    const g = Math.min(nodes.length, 12);
+    const maxSize = g <= FULL_INDEP_MAX ? g : BIG_GROUP_SUBSET;
+    for (let mask = 3; mask < (1 << g); mask++) {
+      if ((mask & (mask - 1)) === 0) continue;
+      let size = 0; for (let t = mask; t; t &= t - 1) size++;
+      if (size > maxSize) continue;
+      pending.push({ nodes: nodes.filter((_, i) => (mask >> i) & 1), done: false });
+    }
+  }
+  const memberValue = new Map();
+  const valueOfMember = nd => {
+    const key = canonicalKey(flatten(nd));
+    if (memberValue.has(key)) return memberValue.get(key);
+    const det = sys.determine(ind(nd));
+    if (det) memberValue.set(key, det.value);
+    return det ? det.value : null;
+  };
+  for (let progress = true; progress;) {
+    progress = false;
+    for (const item of pending) {
+      if (item.done) continue;
+      const vals = item.nodes.map(valueOfMember);
+      if (vals.some(v => v == null)) continue;
+      const prod = vals.reduce((p, v) => p * v, 1);
+      const inter = item.nodes.length === 1 ? item.nodes[0] : { type: 'INTERSECT', args: item.nodes };
+      sys.add(ind(inter), prod, { kind: 'indep', label: item.nodes.map(exprToText).join(', ') + ' độc lập: P(giao) = tích các xác suất' });
+      item.done = true; progress = true;
+    }
+  }
+
+  const model = { names, idx, N, sys, problem: null, origin: sys.origin };
+  model.valueOf = node => {
+    // an event mentioning a set no fact ever touched cannot be determined
+    for (const a of collectAtoms(flatten(node))) if (!(a in idx)) return null;
+    return sys.determine(ind(node));
+  };
+
+  if (sys.conflict) {
+    const others = sys.conflict.involved.filter(m => m.kind !== 'norm').map(m => m.label);
+    model.problem = {
+      kind: 'inconsistent',
+      text: 'Giả thiết "' + sys.conflict.meta.label + '" mâu thuẫn với ' + (others.length ? others.join('; ') : 'điều kiện tổng xác suất bằng 1') + '.',
+    };
+  } else {
+    for (const r of sys.determinedRegions()) {
+      if (r.value < -1e-7 || r.value > 1 + 1e-7) {
+        const used = r.comb.map((c, t) => ({ c, t })).filter(x => Math.abs(x.c) > LIN_TOL).map(x => sys.origin[x.t]).filter(m => m.kind !== 'norm').map(m => m.label);
+        model.problem = {
+          kind: r.value < 0 ? 'negative' : 'over',
+          text: 'Với các giả thiết này, vùng ' + regionLabel(names, r.mask) + ' có xác suất ' + (r.value < 0 ? 'âm' : 'lớn hơn 1') + ' (' + fmtNum(r.value) + ')' + (used.length ? ' — từ: ' + used.join('; ') : '') + '.',
+        };
+        break;
+      }
+    }
+  }
+  return model;
+}
+
+// ---- explanations -------------------------------------------------------
+function termsOf(model, det) {
+  return det.comb.map((c, k) => ({ coef: c, meta: model.origin[k] })).filter(x => Math.abs(x.coef) > LIN_TOL);
+}
+
+// "P(A∩B) = P(A) + P(B) - P(A∪B) = 0.5 + 0.6 - 0.8 = 0.3" when only plain
+// facts are involved; otherwise just the value plus the list of equations used.
+function describeDetermination(model, node, det, colorOf) {
+  const rows = termsOf(model, det);
+  const lhs = toProbLatex(node, colorOf);
+  const plain = rows.length > 0 && rows.every(r => r.meta.kind === 'fact' || r.meta.kind === 'norm');
+  if (!plain) {
+    return {
+      eq: lhs + ' = ' + fmtNum(det.value),
+      note: rows.length ? 'Các ràng buộc đã dùng: ' + rows.filter(r => r.meta.kind !== 'norm').map(r => r.meta.label).join('; ') + '.' : '',
+    };
+  }
+  let sym = '', num = '';
+  rows.forEach((r, i) => {
+    const a = Math.abs(r.coef), neg = r.coef < 0, unit = Math.abs(a - 1) < 1e-9;
+    const isNorm = r.meta.kind === 'norm';
+    const symTerm = isNorm ? (unit ? '1' : fmtNum(a)) : (unit ? '' : fmtNum(a) + ' \\cdot ') + toProbLatex(r.meta.node, colorOf);
+    const val = isNorm ? 1 : r.meta.value;
+    const numTerm = unit ? fmtNum(val) : fmtNum(a) + ' \\cdot ' + fmtNum(val);
+    const sign = i === 0 ? (neg ? '-' : '') : (neg ? ' - ' : ' + ');
+    sym += sign + symTerm;
+    num += sign + numTerm;
+  });
+  return { eq: lhs + ' = ' + sym + ' = ' + num + ' = ' + fmtNum(det.value), note: '' };
+}
+
+// Steps for a query the rule-based solver could not close, derived from the
+// linear model. Returns null when the facts do not determine it.
+function explainViaLinear(node, model, colorOf) {
+  const rule = 'Suy ra từ hệ phương trình tuyến tính trên các vùng cơ bản';
+  if (node.type === 'COND') {
+    const inter = flatten({ type: 'INTERSECT', args: [node.arg, node.given] });
+    const dn = model.valueOf(inter), dd = model.valueOf(node.given);
+    if (!dn || !dd || dd.value <= 1e-12) return null;
+    const value = dn.value / dd.value;
+    const s1 = describeDetermination(model, inter, dn, colorOf);
+    const s2 = describeDetermination(model, node.given, dd, colorOf);
+    return {
+      numeric: value,
+      steps: [
+        { rule, eq: s1.eq, note: s1.note },
+        { rule, eq: s2.eq, note: s2.note },
+        {
+          rule: 'Định nghĩa xác suất có điều kiện',
+          eq: 'P\\left(' + toLatex(node.arg, colorOf) + ' \\mid ' + toLatex(node.given, colorOf) + '\\right) = \\dfrac{' + toProbLatex(inter, colorOf) + '}{' + toProbLatex(node.given, colorOf) + '} = \\dfrac{' + fmtNum(dn.value) + '}{' + fmtNum(dd.value) + '} = ' + fmtNum(value),
+        },
+      ],
+    };
+  }
+  const det = model.valueOf(node);
+  if (!det) return null;
+  const d = describeDetermination(model, node, det, colorOf);
+  return { numeric: det.value, steps: [{ rule, eq: d.eq, note: d.note }] };
+}
