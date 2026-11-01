@@ -10,7 +10,10 @@ function tokenize(src) {
   const isDigit = c => /[0-9]/.test(c);
   while (i < src.length) {
     const c = src[i];
-    if (/\s/.test(c)) { i++; continue; }
+    if (/\s/.test(c)) {
+      i++;
+      continue;
+    }
     if (c === '\\') {
       const rest = src.slice(i);
       const cmds = [
@@ -23,7 +26,12 @@ function tokenize(src) {
       ];
       let matched = false;
       for (const [pat, type] of cmds) {
-        if (rest.startsWith(pat)) { toks.push({ type }); i += pat.length; matched = true; break; }
+        if (rest.startsWith(pat)) {
+          toks.push({ type });
+          i += pat.length;
+          matched = true;
+          break;
+        }
       }
       if (matched) continue;
       toks.push({ type: 'DIFF' });
