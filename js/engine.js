@@ -63,6 +63,9 @@ function tryLineAsHypothesis(line) {
   const exprPart = line.slice(0, idx).trim();
   const value = parseValueInput(line.slice(idx + 1));
   if (!exprPart || isNaN(value) || !isFinite(value)) return null;
-  try { flatten(parseQuery(exprPart).arg); return { exprPart, value }; }
+  try {
+     flatten(parseQuery(exprPart).arg);
+     return { exprPart, value };
+  }
   catch (e) { return null; }
 }
