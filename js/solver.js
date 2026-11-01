@@ -38,8 +38,16 @@ function makeSolver() {
     const key = canonicalKey(node);
     if (cache.has(key)) return cache.get(key);
 
-    if (node.type === 'EMPTY') { const r = { numeric: 0, latex: '0', compound: false }; cache.set(key, r); return r; }
-    if (node.type === 'UNIVERSE') { const r = { numeric: 1, latex: '1', compound: false }; cache.set(key, r); return r; }
+    if (node.type === 'EMPTY') {
+      const r = { numeric: 0, latex: '0', compound: false };
+      cache.set(key, r);
+      return r;
+    }
+    if (node.type === 'UNIVERSE') {
+      const r = { numeric: 1, latex: '1', compound: false };
+      cache.set(key, r);
+      return r;
+    }
 
     if (ctx.knownProb.has(key)) {
       const v = ctx.knownProb.get(key);
@@ -123,7 +131,10 @@ function makeSolver() {
           result = solve(distributed, ctx, colorOf);
         } else {
           const negFactors = [], posFactors = [];
-          for (const a of args) { if (a.type === 'COMPLEMENT') negFactors.push(a.arg); else posFactors.push(a); }
+          for (const a of args) {
+            if (a.type === 'COMPLEMENT') negFactors.push(a.arg);
+            else posFactors.push(a);
+          }
           if (negFactors.length > 0) {
             const X = posFactors.length === 0 ? { type: 'UNIVERSE' } : (posFactors.length === 1 ? posFactors[0] : flatten({ type: 'INTERSECT', args: posFactors }));
             const Y = negFactors.length === 1 ? negFactors[0] : flatten({ type: 'UNION', args: negFactors });
