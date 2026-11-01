@@ -32,8 +32,12 @@ function renderWithOverline(text, barredIndices, font, barPad) {
   }
   ctx.lineWidth = 2;
   for (const idx of barredIndices) {
-    const b = boxes[idx]; const pad = barPad == null ? b.w * 0.08 : barPad;
-    ctx.beginPath(); ctx.moveTo(b.x + pad, 30); ctx.lineTo(b.x + b.w - pad, 30); ctx.stroke();
+    const b = boxes[idx];
+    const pad = barPad == null ? b.w * 0.08 : barPad;
+    ctx.beginPath();
+    ctx.moveTo(b.x + pad, 30);
+    ctx.lineTo(b.x + b.w - pad, 30);
+    ctx.stroke();
   }
   return c;
 }
@@ -75,7 +79,10 @@ test('what follows the last "=" is decoded as a number even at tiny sizes', { sk
 test('detailed API returns ordered, non-overlapping pixel bands', { skip }, () => {
   const d = recognizeLinesDetailed(renderLines(HYP, '36px serif', 60), templates, createCanvas);
   assert.equal(d.length, 3);
-  d.forEach((l, i) => { assert.ok(l.bottom > l.top); if (i) assert.ok(l.top > d[i - 1].bottom); });
+  d.forEach((l, i) => {
+    assert.ok(l.bottom > l.top);
+    if (i) assert.ok(l.top > d[i - 1].bottom);
+  });
 });
 
 test('recognized overline text is valid input for the parser', { skip }, () => {
@@ -110,7 +117,13 @@ test('the reported equation: four unions of ABCD, a bar over D, A, B, C respecti
 // italic). The page upscales small crops before recognizing them; so does this.
 const fs = require('fs');
 const path = require('path');
-const { loadImage } = (() => { try { return require('canvas'); } catch (e) { return {}; } })();
+const { loadImage } = (() => {
+  try {
+    return require('canvas');
+  } catch (e) {
+    return {};
+  }
+})();
 async function recognizeFixture(name) {
   const img = await loadImage(path.join(__dirname, 'fixtures', name));
   const scale = img.width > 1000 ? 1000 / img.width : (img.width < 400 ? Math.min(2, 640 / img.width) : 1);
