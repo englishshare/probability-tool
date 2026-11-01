@@ -19,7 +19,7 @@ Không cần cài đặt gì — chỉ cần mở `index.html` bằng trình duy
 
 Xem hướng dẫn chi tiết:
 - [`docs/HUONG_DAN_SU_DUNG.md`](docs/HUONG_DAN_SU_DUNG.md) — hướng dẫn sử dụng công cụ
-- [`docs/HUONG_DAN_PUSH_GITHUB.md`](docs/HUONG_DAN_PUSH_GITHUB.md) — hướng dẫn đưa project này lên GitHub
+<!-- - [`docs/HUONG_DAN_PUSH_GITHUB.md`](docs/HUONG_DAN_PUSH_GITHUB.md) — hướng dẫn đưa project này lên GitHub -->
 
 ## Cấu trúc thư mục
 
