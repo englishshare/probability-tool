@@ -38,48 +38,145 @@ function tokenize(src) {
       i++;
       continue;
     }
-    if (c === '{') { toks.push({ type: 'LBRACE' }); i++; continue; }
-    if (c === '}') { toks.push({ type: 'RBRACE' }); i++; continue; }
-    if (c === '(') { toks.push({ type: 'LPAREN' }); i++; continue; }
-    if (c === ')') { toks.push({ type: 'RPAREN' }); i++; continue; }
-    if (c === "'") { toks.push({ type: 'PRIME' }); i++; continue; }
+    if (c === '{') {
+      toks.push({ type: 'LBRACE' });
+      i++;
+      continue;
+    }
+    if (c === '}') {
+      toks.push({ type: 'RBRACE' });
+      i++;
+      continue;
+    }
+    if (c === '(') {
+      toks.push({ type: 'LPAREN' });
+      i++;
+      continue;
+    }
+    if (c === ')') {
+      toks.push({ type: 'RPAREN' });
+      i++;
+      continue;
+    }
+    if (c === "'") {
+      toks.push({ type: 'PRIME' });
+      i++;
+      continue;
+    }
     if (c === '^') {
       let j = i + 1;
       if (src[j] === '{') {
         j++;
         let inner = '';
-        while (j < src.length && src[j] !== '}') { inner += src[j]; j++; }
+        while (j < src.length && src[j] !== '}') {
+          inner += src[j];
+          j++;
+        }
         j++;
-        if (inner.trim() === 'c' || inner.trim() === 'C') { toks.push({ type: 'PRIME' }); i = j; continue; }
+        if (inner.trim() === 'c' || inner.trim() === 'C') {
+          toks.push({ type: 'PRIME' });
+          i = j;
+          continue;
+        }
       } else if (src[j] === 'c' || src[j] === 'C') {
-        toks.push({ type: 'PRIME' }); i = j + 1; continue;
+        toks.push({ type: 'PRIME' });
+        i = j + 1;
+        continue;
       }
-      i++; continue;
+      i++;
+      continue;
     }
-    if (c === '∪') { toks.push({ type: 'UNION' }); i++; continue; }
-    if (c === '∩') { toks.push({ type: 'INTERSECT' }); i++; continue; }
-    if (c === '∅') { toks.push({ type: 'EMPTY' }); i++; continue; }
-    if (c === 'Ω') { toks.push({ type: 'UNIVERSE' }); i++; continue; }
-    if (c === '\u0027') { toks.push({ type: 'PRIME' }); i++; continue; }
-    if (c === '|') { toks.push({ type: 'PIPE' }); i++; continue; }
-    if (c === ',') { toks.push({ type: 'COMMA' }); i++; continue; }
-    if (c === '=') { toks.push({ type: 'EQUALS' }); i++; continue; }
-    if (c === '%') { toks.push({ type: 'PERCENT' }); i++; continue; }
+    if (c === '∪') {
+      toks.push({ type: 'UNION' });
+      i++;
+      continue;
+    }
+    if (c === '∩') {
+      toks.push({ type: 'INTERSECT' });
+      i++;
+      continue;
+    }
+    if (c === '∅') {
+      toks.push({ type: 'EMPTY' });
+      i++;
+      continue;
+    }
+    if (c === 'Ω') {
+      toks.push({ type: 'UNIVERSE' });
+      i++;
+      continue;
+    }
+    if (c === '\u0027') {
+      toks.push({ type: 'PRIME' });
+      i++;
+      continue;
+    }
+    if (c === '|') {
+      toks.push({ type: 'PIPE' });
+      i++;
+      continue;
+    }
+    if (c === ',') {
+      toks.push({ type: 'COMMA' });
+      i++;
+      continue;
+    }
+    if (c === '=') {
+      toks.push({ type: 'EQUALS' });
+      i++;
+      continue;
+    }
+    if (c === '%') {
+      toks.push({ type: 'PERCENT' });
+      i++;
+      continue;
+    }
     if (isDigit(c) || (c === '.' && isDigit(src[i + 1]))) {
       let j = i, s = '';
-      while (j < src.length && (isDigit(src[j]) || src[j] === '.')) { s += src[j]; j++; }
+      while (j < src.length && (isDigit(src[j]) || src[j] === '.')) {
+        s += src[j];
+        j++;
+      }
       toks.push({ type: 'NUMBER', value: parseFloat(s) });
-      i = j; continue;
+      i = j;
+      continue;
     }
     if (isLetter(c)) {
       let j = i, s = '';
-      while (j < src.length && isLetter(src[j])) { s += src[j]; j++; }
-      if (s === 'U') { toks.push({ type: 'UNION' }); i = j; continue; }
-      if (s === 'n') { toks.push({ type: 'INTERSECT' }); i = j; continue; }
-      if (s === 'P') { toks.push({ type: 'PFUNC' }); i = j; continue; }
-      if (s.toLowerCase() === 'cup') { toks.push({ type: 'UNION' }); i = j; continue; }
-      if (s.toLowerCase() === 'cap') { toks.push({ type: 'INTERSECT' }); i = j; continue; }
-      if (s === 'omega' || s === 'Omega') { toks.push({ type: 'UNIVERSE' }); i = j; continue; }
+      while (j < src.length && isLetter(src[j])) {
+        s += src[j];
+        j++;
+      }
+      if (s === 'U') {
+        toks.push({ type: 'UNION' });
+        i = j;
+        continue;
+      }
+      if (s === 'n') {
+        toks.push({ type: 'INTERSECT' });
+        i = j;
+        continue;
+      }
+      if (s === 'P') {
+        toks.push({ type: 'PFUNC' });
+        i = j;
+        continue;
+      }
+      if (s.toLowerCase() === 'cup') {
+        toks.push({ type: 'UNION' });
+        i = j;
+        continue;
+      }
+      if (s.toLowerCase() === 'cap') {
+        toks.push({ type: 'INTERSECT' });
+        i = j;
+        continue;
+      }
+      if (s === 'omega' || s === 'Omega') {
+        toks.push({ type: 'UNIVERSE' });
+        i = j;
+        continue;
+      }
       let k = j;
       while (k < src.length && isDigit(src[k])) { k++; }
       const trailingDigits = src.slice(j, k);
@@ -97,14 +194,23 @@ function tokenize(src) {
       let prevWasAtom = false;
       for (let idx = i; idx < j; idx++) {
         const letter = src[idx];
-        if (letter === 'U') { toks.push({ type: 'UNION' }); prevWasAtom = false; continue; }
-        if (letter === 'n') { toks.push({ type: 'INTERSECT' }); prevWasAtom = false; continue; }
+        if (letter === 'U') {
+          toks.push({ type: 'UNION' });
+          prevWasAtom = false;
+          continue;
+        }
+        if (letter === 'n') {
+          toks.push({ type: 'INTERSECT' });
+          prevWasAtom = false;
+          continue;
+        }
         if (prevWasAtom) toks.push({ type: 'INTERSECT' });
         const isLast = idx === j - 1;
         toks.push({ type: 'ATOM', name: letter + (isLast ? trailingDigits : '') });
         prevWasAtom = true;
       }
-      i = k; continue;
+      i = k;
+      continue;
     }
     i++;
   }
@@ -136,16 +242,38 @@ function parseTokens(toks, where) {
   function parsePrimary() {
     const t = peek();
     if (!t) fail('biểu thức kết thúc bất ngờ');
-    if (t.type === 'LPAREN') { next(); const e = parseCond(); expect('RPAREN'); return e; }
-    if (t.type === 'OVERLINE_OPEN') { next(); const e = parseCond(); expect('RBRACE'); return { type: 'COMPLEMENT', arg: e }; }
-    if (t.type === 'ATOM') { next(); return { type: 'ATOM', name: t.name }; }
-    if (t.type === 'EMPTY') { next(); return { type: 'EMPTY' }; }
-    if (t.type === 'UNIVERSE') { next(); return { type: 'UNIVERSE' }; }
+    if (t.type === 'LPAREN') {
+      next();
+      const e = parseCond();
+      expect('RPAREN');
+      return e;
+    }
+    if (t.type === 'OVERLINE_OPEN') {
+      next();
+      const e = parseCond();
+      expect('RBRACE');
+      return { type: 'COMPLEMENT', arg: e };
+    }
+    if (t.type === 'ATOM') {
+      next();
+      return { type: 'ATOM', name: t.name };
+    }
+    if (t.type === 'EMPTY') {
+      next();
+      return { type: 'EMPTY' };
+    }
+    if (t.type === 'UNIVERSE') {
+      next();
+      return { type: 'UNIVERSE' };
+    }
     return fail('không nhận diện được token ' + t.type);
   }
   function parseComplement() {
     let node = parsePrimary();
-    while (peek() && peek().type === 'PRIME') { next(); node = { type: 'COMPLEMENT', arg: node }; }
+    while (peek() && peek().type === 'PRIME') {
+      next();
+      node = { type: 'COMPLEMENT', arg: node };
+    }
     return node;
   }
   function parseInter() {
@@ -171,12 +299,18 @@ function parseTokens(toks, where) {
   }
   function parseUnion() {
     let node = parseInter();
-    while (peek() && peek().type === 'UNION') { next(); node = { type: 'UNION', args: [node, parseInter()] }; }
+    while (peek() && peek().type === 'UNION') {
+      next();
+      node = { type: 'UNION', args: [node, parseInter()] };
+    }
     return node;
   }
   function parseCond() {
     let node = parseUnion();
-    if (peek() && peek().type === 'PIPE') { next(); node = { type: 'COND', arg: node, given: parseUnion() }; }
+    if (peek() && peek().type === 'PIPE') {
+      next();
+      node = { type: 'COND', arg: node, given: parseUnion() };
+    }
     return node;
   }
   const node = parseCond();
@@ -198,8 +332,17 @@ function parseQuery(str) {
   if (toks[1] && toks[1].type === 'LPAREN') {
     let depth = 0, start = -1, end = -1;
     for (let k = 1; k < toks.length; k++) {
-      if (toks[k].type === 'LPAREN') { if (depth === 0) start = k; depth++; }
-      else if (toks[k].type === 'RPAREN') { depth--; if (depth === 0) { end = k; break; } }
+      if (toks[k].type === 'LPAREN') {
+        if (depth === 0) start = k;
+        depth++;
+      }
+      else if (toks[k].type === 'RPAREN') {
+        depth--;
+        if (depth === 0) {
+          end = k;
+          break;
+        }
+      }
     }
     if (start === -1 || end === -1) throw new Error('Lỗi cú pháp: thiếu dấu ngoặc trong P(...)');
     if (end !== toks.length - 1) throw new Error('Lỗi cú pháp: còn dư ký hiệu sau dấu ngoặc đóng của P(...)');
