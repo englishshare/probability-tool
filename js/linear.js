@@ -31,26 +31,44 @@ function parseCanonicalKey(key) {
   let i = 0;
   function expr() {
     const c = key[i];
-    if (c === '~') { i++; return { type: 'COMPLEMENT', arg: expr() }; }
+    if (c === '~') {
+      i++;
+      return { type: 'COMPLEMENT', arg: expr() };
+    }
     if (c === '(') {
       i++;
       const args = [expr()];
       let op = null;
-      while (key[i] === '∪' || key[i] === '∩') { op = key[i]; i++; args.push(expr()); }
+      while (key[i] === '∪' || key[i] === '∩') {
+        op = key[i];
+        i++;
+        args.push(expr());
+      }
       if (key[i] !== ')') throw new Error('bad key: ' + key);
       i++;
       return op ? { type: op === '∪' ? 'UNION' : 'INTERSECT', args } : args[0];
     }
-    if (c === '∅') { i++; return { type: 'EMPTY' }; }
-    if (c === 'Ω') { i++; return { type: 'UNIVERSE' }; }
+    if (c === '∅') {
+      i++;
+      return { type: 'EMPTY' };
+    }
+    if (c === 'Ω') {
+      i++;
+      return { type: 'UNIVERSE' };
+    }
     let j = i;
     while (j < key.length && '()∪∩~|'.indexOf(key[j]) === -1) j++;
     if (j === i) throw new Error('bad key: ' + key);
-    const name = key.slice(i, j); i = j;
+    const name = key.slice(i, j);
+    i = j;
     return { type: 'ATOM', name };
   }
   const a = expr();
-  if (key[i] === '|') { i++; const b = expr(); return { type: 'COND', arg: a, given: b }; }
+  if (key[i] === '|') {
+    i++;
+    const b = expr();
+    return { type: 'COND', arg: a, given: b };
+  }
   if (i !== key.length) throw new Error('bad key: ' + key);
   return a;
 }
