@@ -29,7 +29,6 @@ probability-set-theory-tool/
 ├── README.md                       # File này
 └── docs/
     ├── HUONG_DAN_SU_DUNG.md
-    └── HUONG_DAN_PUSH_GITHUB.md
 ```
 
 ## Công nghệ sử dụng
