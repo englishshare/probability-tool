@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..', '..');
-const ORDER = ['parser', 'algebra', 'solver', 'linear', 'venn', 'engine', 'ocr'];
+const ORDER = ['parser', 'algebra', 'solver', 'linear', 'venn', 'engine', 'export', 'practice', 'ocr'];
 
 function loadModules(files) {
   files = files || ORDER;
