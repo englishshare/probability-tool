@@ -7,7 +7,7 @@ Công cụ web (1 file HTML, chạy hoàn toàn trong trình duyệt) giúp nh�
 - **3 cách nhập biểu thức** (hoạt động với bất kỳ số lượng tập hợp/biến cố nào, không chỉ 2):
   - Ký hiệu thường: `U` = hợp, `n` = giao, `'`/`^c` = phần bù, `\` = hiệu — ví dụ `P(A U (B n C))`; viết liền chữ như `AB` cũng được hiểu là `A n B` (viết tắt quen thuộc cho P(AB))
   - Mã LaTeX: `\cup`, `\cap`, `\overline{...}`, `\setminus`, `\mid`, `\emptyset`, `\Omega`
-  - Ảnh: nhận diện chữ in/gõ máy ngay trong trình duyệt (không qua máy chủ ngoài), hỗ trợ ảnh nhiều dòng (vd nhiều giả thiết chụp cùng lúc) — mỗi dòng nhận diện được cho chọn dùng làm giả thiết hoặc làm biểu thức cần giải, luôn kiểm tra lại trước khi giải
+  - Ảnh: nhận diện chữ in/gõ máy ngay trong trình duyệt (không qua máy chủ ngoài), hỗ trợ ảnh nhiều dòng (ví dụ nhiều giả thiết chụp cùng lúc) — mỗi dòng nhận diện được cho chọn dùng làm giả thiết hoặc làm biểu thức cần giải, luôn kiểm tra lại trước khi giải
 - **Khai báo giả thiết đã biết:** xác suất đơn `P(A)=...`, xác suất có điều kiện `P(A|B)=...`, độc lập, xung khắc, và phân hoạch (dùng cho Bayes / công thức xác suất toàn phần)
 - **Bộ giải từng bước:** áp dụng đệ quy nguyên lý bù trừ (Inclusion–Exclusion, tổng quát cho n tập hợp), quy tắc phần bù, luật phân phối, định nghĩa xác suất có điều kiện, độc lập/xung khắc, định lý Bayes, công thức xác suất toàn phần — mỗi bước hiển thị bằng LaTeX (KaTeX)
 - **Biểu đồ Venn tự động:** chính xác cho 2–4 tập hợp (4 tập hợp dùng cách vẽ 4-ellipse); từ 5 tập hợp trở lên hiển thị bảng liệt kê vùng thay vì hình vẽ, vì không có cách vẽ nào bằng đường cong lồi thể hiện đúng hết mọi vùng giao khi ≥ 5 tập hợp
