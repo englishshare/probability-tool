@@ -43,7 +43,10 @@ function makeSolver() {
     steps.length = s.steps;
     while (cacheOrder.length > s.cache) cache.delete(cacheOrder.pop());
   }
-  const remember = (key, result) => { cache.set(key, result); cacheOrder.push(key); };
+  const remember = (key, result) => {
+     cache.set(key, result);
+     cacheOrder.push(key);
+  };
 
   // Wrap a sub-result's latex in parens when it's being subtracted or
   // multiplied and its own display isn't already self-delimiting (a bare
@@ -125,7 +128,10 @@ function makeSolver() {
       const sub = node.args.filter((_, i) => (mask >> i) & 1);
       const subNode = sub.length === 1 ? sub[0] : flatten({ type: 'INTERSECT', args: sub });
       const r = solve(subNode, ctx, colorOf);
-      if (r.numeric == null) { rollback(snap); return null; }
+      if (r.numeric == null) {
+         rollback(snap);
+         return null;
+      }
       terms.push({ size: sub.length, node: subNode, value: r.numeric });
     }
     terms.sort((a, b) => a.size - b.size);
@@ -198,7 +204,10 @@ function makeSolver() {
         const cv = condValue(node, g, ctx);
         if (!cv) { rollback(snap); return null; }
         const p = solve(g, ctx, colorOf);
-        if (p.numeric == null) { rollback(snap); return null; }
+        if (p.numeric == null) {
+           rollback(snap);
+           return null;
+        }
         explainCond(cv, node, g, colorOf);
         parts.push({ node: g, cond: cv.numeric, p: p.numeric });
       }
@@ -249,16 +258,25 @@ function makeSolver() {
         if (!known) continue;
         const snap = snapshot();
         const py = solve(y, ctx, colorOf);
-        if (py.numeric == null) { rollback(snap); continue; }
+        if (py.numeric == null) {
+           rollback(snap);
+           continue;
+        }
         const fact = ctx.knownProb.get(canonicalKey(known === 'inter' ? inter : union));
         const X = toProbLatex(node, colorOf), Y = toProbLatex(y, colorOf);
         if (known === 'inter') {
-          if (py.numeric === 0) { rollback(snap); continue; }
+          if (py.numeric === 0) {
+             rollback(snap);
+             continue;
+          }
           const numeric = fact / py.numeric;
           steps.push({ rule: 'Độc lập (suy ngược)', eq: `\\begin{aligned}${toProbLatex(inter, colorOf)} &= ${X}${Y} \\\\ \\Rightarrow ${X} &= \\dfrac{${toProbLatex(inter, colorOf)}}{${Y}} = \\dfrac{${fmtNum(fact)}}{${fmtNum(py.numeric)}} = ${fmtNum(numeric)}\\end{aligned}` });
           return { numeric, latex: fmtNum(numeric), compound: false };
         }
-        if (py.numeric === 1) { rollback(snap); continue; }
+        if (py.numeric === 1) {
+           rollback(snap);
+           continue;
+        }
         const numeric = (fact - py.numeric) / (1 - py.numeric);
         steps.push({ rule: 'Độc lập (suy ngược)', eq: `\\begin{aligned}${toProbLatex(union, colorOf)} &= ${X} + ${Y} - ${X}${Y} \\\\ \\Rightarrow ${X} &= \\dfrac{${toProbLatex(union, colorOf)} - ${Y}}{1 - ${Y}} = \\dfrac{${fmtNum(fact)} - ${fmtNum(py.numeric)}}{1 - ${fmtNum(py.numeric)}} = ${fmtNum(numeric)}\\end{aligned}` });
         return { numeric, latex: fmtNum(numeric), compound: false };
@@ -398,7 +416,10 @@ function makeSolver() {
           result = solve(distributed, ctx, colorOf);
         } else {
           const negFactors = [], posFactors = [];
-          for (const a of args) { if (a.type === 'COMPLEMENT') negFactors.push(a.arg); else posFactors.push(a); }
+          for (const a of args) {
+             if (a.type === 'COMPLEMENT') negFactors.push(a.arg);
+             else posFactors.push(a);
+          }
           // General conditional-probability split: try every way to
           // partition the args into two non-empty groups G1 | G2 and look
           // for a given P(G2|G1) or P(G1|G2). This covers the plain pairwise
