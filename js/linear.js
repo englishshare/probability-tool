@@ -25,54 +25,6 @@
 const MAX_LINEAR_ATOMS = 12;
 const LIN_TOL = 1e-9;
 
-// Inverse of canonicalKey (algebra.js): lets a fact stored by key be turned
-// back into a set expression.
-function parseCanonicalKey(key) {
-  let i = 0;
-  function expr() {
-    const c = key[i];
-    if (c === '~') {
-      i++;
-      return { type: 'COMPLEMENT', arg: expr() };
-    }
-    if (c === '(') {
-      i++;
-      const args = [expr()];
-      let op = null;
-      while (key[i] === '∪' || key[i] === '∩') {
-        op = key[i];
-        i++;
-        args.push(expr());
-      }
-      if (key[i] !== ')') throw new Error('bad key: ' + key);
-      i++;
-      return op ? { type: op === '∪' ? 'UNION' : 'INTERSECT', args } : args[0];
-    }
-    if (c === '∅') {
-      i++;
-      return { type: 'EMPTY' };
-    }
-    if (c === 'Ω') {
-      i++;
-      return { type: 'UNIVERSE' };
-    }
-    let j = i;
-    while (j < key.length && '()∪∩~|'.indexOf(key[j]) === -1) j++;
-    if (j === i) throw new Error('bad key: ' + key);
-    const name = key.slice(i, j);
-    i = j;
-    return { type: 'ATOM', name };
-  }
-  const a = expr();
-  if (key[i] === '|') {
-    i++;
-    const b = expr();
-    return { type: 'COND', arg: a, given: b };
-  }
-  if (i !== key.length) throw new Error('bad key: ' + key);
-  return a;
-}
-
 function evalAtMask(node, idx, mask) {
   switch (node.type) {
     case 'ATOM': return ((mask >> idx[node.name]) & 1) === 1;
@@ -170,12 +122,15 @@ function regionLabel(names, mask) {
 }
 
 function factLabel(node, value) {
-  if (node.type === 'COND') return 'P(' + exprToText(node.arg) + ' | ' + exprToText(node.given) + ') = ' + fmtNum(value);
+  if (node.type === 'COND') {
+    const e = exprToText(node.arg), f = exprToText(node.given);
+    return 'P(' + e + ' | ' + f + ') = ' + fmtNum(value) + ', tức P(' + e + ' ∩ ' + f + ') = ' + fmtNum(value) + ' · P(' + f + ')';
+  }
   return 'P(' + exprToText(node) + ') = ' + fmtNum(value);
 }
 
 // Builds the system for a context (the same {knownProb, independentGroups,
-// mutexPairs, partition} the rule-based solver reads). Returns null when
+// mutexPairs, partition(s)} the rule-based solver reads). Returns null when
 // there are too many sets for a 2^n table, otherwise a model that answers
 // valueOf(event) and reports `problem` if the facts cannot all hold.
 function buildLinearModel(ctx, extraAtoms) {
@@ -192,8 +147,8 @@ function buildLinearModel(ctx, extraAtoms) {
   for (const g of ctx.independentGroups || []) {
     try { const nodes = [...g].map(parseCanonicalKey); nodes.forEach(n => collectAtoms(n, atoms)); groups.push(nodes); } catch (e) { /* skip */ }
   }
-  const partition = ctx.partition && ctx.partition.length ? ctx.partition.map(nm => ({ type: 'ATOM', name: nm })) : null;
-  if (partition) partition.forEach(p => atoms.add(p.name));
+  const partitions = partitionsOf(ctx).map(p => p.map(nm => ({ type: 'ATOM', name: nm })));
+  partitions.forEach(part => part.forEach(p => atoms.add(p.name)));
 
   const names = [...atoms].sort();
   const n = names.length;
@@ -218,7 +173,7 @@ function buildLinearModel(ctx, extraAtoms) {
   for (const [a, b] of mutex) {
     sys.add(ind(and(a, b)), 0, { kind: 'mutex', label: exprToText(a) + ' và ' + exprToText(b) + ' xung khắc' });
   }
-  if (partition) {
+  for (const partition of partitions) {
     const plabel = '{' + partition.map(p => p.name).join(', ') + '}';
     for (let i = 0; i < partition.length; i++) {
       for (let j = i + 1; j < partition.length; j++) {
@@ -262,10 +217,26 @@ function buildLinearModel(ctx, extraAtoms) {
     for (const item of pending) {
       if (item.done) continue;
       const vals = item.nodes.map(valueOfMember);
-      if (vals.some(v => v == null)) continue;
-      const prod = vals.reduce((p, v) => p * v, 1);
+      const unknown = vals.map((v, i) => (v == null ? i : -1)).filter(i => i >= 0);
+      if (unknown.length === vals.length) continue;           // nothing known to multiply yet
       const inter = item.nodes.length === 1 ? item.nodes[0] : { type: 'INTERSECT', args: item.nodes };
-      sys.add(ind(inter), prod, { kind: 'indep', label: item.nodes.map(exprToText).join(', ') + ' độc lập: P(giao) = tích các xác suất' });
+      const label = item.nodes.map(exprToText).join(', ') + ' độc lập: P(giao) = tích các xác suất';
+      if (unknown.length === 0) {
+        sys.add(ind(inter), vals.reduce((p, v) => p * v, 1), { kind: 'indep', label });
+      } else {
+        // Mutually independent sets stay independent of any event built from
+        // the others, so P(K ∩ U) = P(K)·P(U), where K is the known members
+        // (their product c is a number) and U the intersection of those still
+        // unknown. That is a plain linear equation in the region
+        // probabilities -- P(K∩U) - c·P(U) = 0 -- so the rest of the system
+        // can pin the unknowns down (for instance from P(A∪B)).
+        const unknownNodes = unknown.map(i => item.nodes[i]);
+        const u = unknownNodes.length === 1 ? unknownNodes[0] : { type: 'INTERSECT', args: unknownNodes };
+        const c = vals.reduce((p, v, i) => (v == null ? p : p * v), 1);
+        const num = ind(inter), den = ind(u), row = new Float64Array(N);
+        for (let m = 0; m < N; m++) row[m] = num[m] - c * den[m];
+        sys.add(row, 0, { kind: 'indep', label });
+      }
       item.done = true; progress = true;
     }
   }
@@ -295,7 +266,76 @@ function buildLinearModel(ctx, extraAtoms) {
       }
     }
   }
+  if (!model.problem && N <= 256 && sys.rows.length <= 256 && lpFeasible(sys.rows, N) === false) {
+    model.problem = {
+      kind: 'infeasible',
+      text: 'Các giả thiết không thể cùng đúng: không có cách gán xác suất không âm cho các vùng sao cho thỏa mãn đồng thời tất cả (kiểm tra bằng quy hoạch tuyến tính). Hãy kiểm tra lại các giá trị đã nhập.',
+    };
+  }
   return model;
+}
+
+// ---- feasibility (simplex, phase I) ---------------------------------------
+// Row reduction can only notice a contradiction that pins a region to a
+// negative value, or yields 0 = c. Facts can also be impossible together
+// while leaving every individual region free -- "x1 + x2 = -0.1" with both
+// regions unknown. The honest test is whether ANY non-negative assignment of
+// the 2^n region probabilities satisfies every equation: a linear-programming
+// feasibility problem. Phase I of the simplex method answers it by trying to
+// drive a set of artificial slack variables to zero (Bland's rule guards
+// against cycling).
+function lpFeasible(rows, N) {
+  const m = rows.length;
+  if (!m) return true;
+  const W = N + m + 1;
+  const T = rows.map((r, i) => {
+    const t = new Float64Array(W);
+    const sign = r.rhs < 0 ? -1 : 1;
+    for (let j = 0; j < N; j++) t[j] = sign * r.vec[j];
+    t[N + i] = 1;
+    t[W - 1] = sign * r.rhs;
+    return t;
+  });
+  const basis = rows.map((_, i) => N + i);
+  const z = new Float64Array(W);
+  for (let j = 0; j < N; j++) { let c = 0; for (let i = 0; i < m; i++) c -= T[i][j]; z[j] = c; }
+  for (let i = 0; i < m; i++) z[W - 1] -= T[i][W - 1];
+  const EPS = 1e-9, DANTZIG_ITERS = 400, MAX_ITERS = 6000;
+  let optimal = false;
+  for (let iter = 0; iter < MAX_ITERS; iter++) {
+    // Most-negative reduced cost is fast; once it has run a while, switch to
+    // the smallest index (Bland's rule), which cannot cycle.
+    let e = -1;
+    if (iter < DANTZIG_ITERS) {
+      let low = -EPS;
+      for (let j = 0; j < N + m; j++) if (z[j] < low) { low = z[j]; e = j; }
+    } else {
+      for (let j = 0; j < N + m; j++) if (z[j] < -EPS) { e = j; break; }
+    }
+    if (e < 0) { optimal = true; break; }
+    let r = -1, best = Infinity;
+    for (let i = 0; i < m; i++) {
+      if (T[i][e] > EPS) {
+        const ratio = T[i][W - 1] / T[i][e];
+        if (ratio < best - 1e-12 || (Math.abs(ratio - best) <= 1e-12 && basis[i] < basis[r])) { best = ratio; r = i; }
+      }
+    }
+    if (r < 0) break;
+    const piv = T[r][e];
+    for (let j = 0; j < W; j++) T[r][j] /= piv;
+    for (let i = 0; i < m; i++) {
+      if (i === r) continue;
+      const f = T[i][e];
+      if (Math.abs(f) > 0) for (let j = 0; j < W; j++) T[i][j] -= f * T[r][j];
+    }
+    const fz = z[e];
+    for (let j = 0; j < W; j++) z[j] -= fz * T[r][j];
+    basis[r] = e;
+  }
+  // Only a finished run proves anything. Running out of iterations says
+  // nothing about feasibility, so it must never be reported as a conflict.
+  if (!optimal) return null;
+  return -z[W - 1] < 1e-7;     // total artificial slack left
 }
 
 // ---- explanations -------------------------------------------------------

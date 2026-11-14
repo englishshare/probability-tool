@@ -81,7 +81,7 @@ function renderVenn1(names, regions, colorOf) {
   const val = a => fmtRegion(regionVal(regions, [a]));
   const c = colorOf(names[0]);
   return `<svg viewBox="0 0 360 300" xmlns="http://www.w3.org/2000/svg" font-family="Cambria, 'Palatino Linotype', 'Noto Serif', 'Times New Roman', serif">
-    <rect x="10" y="10" width="340" height="280" rx="14" fill="none" stroke="var(--border)" stroke-width="2"/>
+    <rect x="10" y="10" width="340" height="280" rx="14" fill="none" stroke="var(--line-strong)" stroke-width="2"/>
     <circle cx="180" cy="150" r="105" fill="${c}" fill-opacity="0.3" stroke="${c}" stroke-width="2.5"/>
     <text x="46" y="40" font-size="14" fill="var(--text)">Ngoài ${names[0]}: ${val(false)}</text>
     <text x="180" y="155" font-size="19" fill="var(--text)" text-anchor="middle">${val(true)}</text>
@@ -93,7 +93,7 @@ function renderVenn2(names, regions, colorOf) {
   const ca = colorOf(names[0]), cb = colorOf(names[1]);
   const val = (a, b) => fmtRegion(regionVal(regions, [a, b]));
   return `<svg viewBox="0 0 440 320" xmlns="http://www.w3.org/2000/svg" font-family="Cambria, 'Palatino Linotype', 'Noto Serif', 'Times New Roman', serif">
-    <rect x="10" y="10" width="420" height="300" rx="14" fill="none" stroke="var(--border)" stroke-width="2"/>
+    <rect x="10" y="10" width="420" height="300" rx="14" fill="none" stroke="var(--line-strong)" stroke-width="2"/>
     <circle cx="175" cy="160" r="110" fill="${ca}" fill-opacity="0.32" stroke="${ca}" stroke-width="2.5"/>
     <circle cx="275" cy="160" r="110" fill="${cb}" fill-opacity="0.32" stroke="${cb}" stroke-width="2.5"/>
     <text x="55" y="40" font-size="14" fill="var(--text)">Ngoài ${names[0]}, ${names[1]}: ${val(false, false)}</text>
@@ -109,7 +109,7 @@ function renderVenn3(names, regions, colorOf) {
   const [ca, cb, cc] = names.map(colorOf);
   const val = (a, b, c) => fmtRegion(regionVal(regions, [a, b, c]));
   return `<svg viewBox="0 0 460 400" xmlns="http://www.w3.org/2000/svg" font-family="Cambria, 'Palatino Linotype', 'Noto Serif', 'Times New Roman', serif">
-    <rect x="10" y="10" width="440" height="380" rx="14" fill="none" stroke="var(--border)" stroke-width="2"/>
+    <rect x="10" y="10" width="440" height="380" rx="14" fill="none" stroke="var(--line-strong)" stroke-width="2"/>
     <circle cx="190" cy="170" r="115" fill="${ca}" fill-opacity="0.28" stroke="${ca}" stroke-width="2.5"/>
     <circle cx="290" cy="170" r="115" fill="${cb}" fill-opacity="0.28" stroke="${cb}" stroke-width="2.5"/>
     <circle cx="240" cy="260" r="115" fill="${cc}" fill-opacity="0.28" stroke="${cc}" stroke-width="2.5"/>
@@ -146,7 +146,7 @@ function renderVenn4(names, regions, colorOf) {
   });
   const colors = names.map(colorOf);
   let svg = `<svg viewBox="0 0 ${SHIFT * 2} ${SHIFT * 2}" xmlns="http://www.w3.org/2000/svg" font-family="Cambria, 'Palatino Linotype', 'Noto Serif', 'Times New Roman', serif">`;
-  svg += `<rect x="10" y="10" width="${SHIFT * 2 - 20}" height="${SHIFT * 2 - 20}" rx="16" fill="none" stroke="var(--border)" stroke-width="2"/>`;
+  svg += `<rect x="10" y="10" width="${SHIFT * 2 - 20}" height="${SHIFT * 2 - 20}" rx="16" fill="none" stroke="var(--line-strong)" stroke-width="2"/>`;
   ellipses.forEach((e, i) => {
     svg += `<ellipse cx="${e.cx + SHIFT}" cy="${e.cy + SHIFT}" rx="${VENN4_A}" ry="${VENN4_B}" transform="rotate(${e.thetaDeg} ${e.cx + SHIFT} ${e.cy + SHIFT})" fill="${colors[i]}" fill-opacity="0.25" stroke="${colors[i]}" stroke-width="2.5"/>`;
   });
@@ -187,4 +187,71 @@ function renderVennDiagram(names, regions, colorOf) {
   if (names.length === 3) return { svg: renderVenn3(names, regions, colorOf) };
   if (names.length === 4) return { svg: renderVenn4(names, regions, colorOf) };
   return renderVennTable(names, regions, colorOf);
+}
+
+// ---- TikZ export ---------------------------------------------------------
+// The same geometry as the SVG above (centres, radii, rotation angles and
+// label positions), in TikZ: for people who typeset exams and reports in
+// LaTeX and want the diagram as vector drawing code rather than a screenshot.
+// SVG's y axis points down and TikZ's up, hence the flip; a rotation that is
+// clockwise on screen is negative in TikZ for the same reason.
+const VENN_TIKZ_LAYOUT = {
+  1: { U: 70, W: 360, H: 300, frame: [10, 10, 340, 280], circles: [[180, 150, 105]], outside: [46, 40], values: { 1: [180, 155] }, names: [[180, 270]] },
+  2: { U: 70, W: 440, H: 320, frame: [10, 10, 420, 300], circles: [[175, 160, 110], [275, 160, 110]], outside: [55, 40], values: { 1: [118, 165], 2: [332, 165], 3: [225, 165] }, names: [[175, 290], [275, 290]] },
+  3: { U: 70, W: 460, H: 400, frame: [10, 10, 440, 380], circles: [[190, 170, 115], [290, 170, 115], [240, 260, 115]], outside: [55, 40],
+    values: { 1: [140, 120], 2: [340, 120], 4: [240, 345], 3: [240, 150], 5: [175, 255], 6: [305, 255], 7: [240, 210] }, names: [[150, 70], [330, 70], [240, 385]] },
+};
+
+function renderVennTikz(names, regions, colorOf) {
+  const n = names.length;
+  if (n < 1 || n > 4) return null;
+  const fmt = v => String(+v.toFixed(2));
+  const val = mask => { const r = regions.find(x => x.mask === mask); return r && r.numeric != null ? fmtNum(r.numeric) : '\\textbf{?}'; };
+  const hex = nm => colorOf(nm).replace('#', '').toUpperCase();
+  const cname = i => 'venn' + 'ABCD'[i];
+  const mathName = nm => '$' + nm.replace(/(\d+)$/, '_{$1}') + '$';
+  const outsideLabel = '$\\overline{' + names.join(' \\cup ') + '}$';
+  const out = [];
+  out.push('% Biểu đồ Venn — cần \\usepackage{tikz}');
+  out.push(n === 4 ? '\\begin{tikzpicture}[font=\\scriptsize]' : '\\begin{tikzpicture}[font=\\small]');
+  names.forEach((nm, i) => out.push(`  \\definecolor{${cname(i)}}{HTML}{${hex(nm)}}`));
+
+  if (n <= 3) {
+    const L = VENN_TIKZ_LAYOUT[n];
+    const P = (x, y) => `(${fmt(x / L.U)},${fmt((L.H - y) / L.U)})`;
+    const [fx, fy, fw, fh] = L.frame;
+    out.push(`  \\draw[rounded corners=6pt, thick, gray] ${P(fx, fy + fh)} rectangle ${P(fx + fw, fy)};`);
+    L.circles.forEach(([cx, cy, r], i) => out.push(`  \\filldraw[fill=${cname(i)}, fill opacity=0.28, draw=${cname(i)}, very thick] ${P(cx, cy)} circle (${fmt(r / L.U)});`));
+    out.push(`  \\node[anchor=west] at ${P(...L.outside)} {${outsideLabel} = ${val(0)}};`);
+    Object.entries(L.values).forEach(([mask, [x, y]]) => out.push(`  \\node at ${P(x, y)} {${val(+mask)}};`));
+    L.names.forEach(([x, y], i) => out.push(`  \\node[text=${cname(i)}] at ${P(x, y)} {${mathName(names[i])}};`));
+  } else {
+    const U = 75, S = 340, H = S * 2;
+    const P = (x, y) => `(${fmt((x + S) / U)},${fmt((H - (y + S)) / U)})`;
+    out.push(`  \\draw[rounded corners=6pt, thick, gray] ${P(-S + 10, S - 10)} rectangle ${P(S - 10, -S + 10)};`);
+    VENN4_ANGLES.forEach((deg, i) => {
+      const th = deg * Math.PI / 180;
+      const cx = -VENN4_D * Math.sin(th), cy = VENN4_D * Math.cos(th);
+      const c = P(cx, cy);
+      out.push(`  \\filldraw[rotate around={${-deg}:${c}}, fill=${cname(i)}, fill opacity=0.25, draw=${cname(i)}, very thick] ${c} ellipse (${fmt(VENN4_A / U)} and ${fmt(VENN4_B / U)});`);
+    });
+    out.push(`  \\node[anchor=west] at ${P(-S + 46, -S + 40)} {${outsideLabel} = ${val(0)}};`);
+    for (let mask = 1; mask < 16; mask++) { const [x, y] = VENN4_CENTROIDS[mask]; out.push(`  \\node at ${P(x, y)} {${val(mask)}};`); }
+    VENN4_ANGLES.forEach((deg, i) => {
+      const th = deg * Math.PI / 180;
+      const tx = -VENN4_D * Math.sin(th) + (VENN4_A + 22) * Math.cos(th);
+      const ty = VENN4_D * Math.cos(th) + (VENN4_A + 22) * Math.sin(th);
+      out.push(`  \\node[text=${cname(i)}] at ${P(tx, ty)} {${mathName(names[i])}};`);
+    });
+  }
+  out.push('\\end{tikzpicture}');
+  return out.join('\n');
+}
+
+// the picture alone, as a compilable document (class `standalone` crops to it)
+function renderVennTikzDocument(names, regions, colorOf) {
+  const pic = renderVennTikz(names, regions, colorOf);
+  if (!pic) return null;
+  return ['% Biên dịch bằng pdfLaTeX. Dùng \\documentclass[tikz]{standalone} nên PDF chỉ chứa đúng hình.',
+    '\\documentclass[tikz, border=6pt]{standalone}', '\\begin{document}', pic, '\\end{document}', ''].join('\n');
 }

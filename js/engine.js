@@ -13,8 +13,16 @@
 
 function solveQuery(queryNode, ctx, colorOf) {
   const node = flatten(queryNode);
-  const rule = makeSolver();
-  const r = rule.solve(node, ctx, colorOf);
+  let rule = makeSolver();
+  let r;
+  try {
+    r = rule.solve(node, ctx, colorOf);
+  } catch (e) {
+    // Whatever goes wrong inside the rules, the linear model below can still
+    // answer from the same facts -- never let one method's failure end the solve.
+    rule = { steps: [], missing: new Set() };
+    r = { numeric: null, latex: toProbLatex(node, colorOf), compound: false };
+  }
   const atoms = [...collectAtoms(node)];
   const model = buildLinearModel(ctx, atoms);
   const out = { numeric: r.numeric, latex: r.latex, steps: rule.steps, missing: rule.missing, via: 'rule', model, atoms };
@@ -63,9 +71,6 @@ function tryLineAsHypothesis(line) {
   const exprPart = line.slice(0, idx).trim();
   const value = parseValueInput(line.slice(idx + 1));
   if (!exprPart || isNaN(value) || !isFinite(value)) return null;
-  try {
-     flatten(parseQuery(exprPart).arg);
-     return { exprPart, value };
-  }
+  try { flatten(parseQuery(exprPart).arg); return { exprPart, value }; }
   catch (e) { return null; }
 }

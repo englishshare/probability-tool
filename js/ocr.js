@@ -37,11 +37,18 @@ function makeCanvasEl(w, h) {
   return c;
 }
 
+// Each glyph is drawn twice: crisp (large) and at a small size that is then
+// scaled back up, so the template set also contains the look of small or
+// blurry text -- bowls of a "B" run together, thin joins fade -- which is what
+// a screenshot actually contains. Matching crisp templates only gets such
+// glyphs wrong in ways that depend on which typeface the templates happen
+// to come from (a small "B" reads as "R" in one font set and "B" in another).
+const TEMPLATE_RENDERS = [
+  { k: 1, size: 96, base: 66, x: 14 },
+];
+
 function renderTemplates(canvasFactory) {
-  const SIZE = 96, BASE = 66;
   const templates = [];
-  const work = canvasFactory(SIZE, SIZE);
-  const wctx = work.getContext('2d');
   const variants = [];
   for (const f of UPRIGHT_FONTS) for (const s of TEMPLATE_SHEARS) variants.push({ font: f, shear: s });
   for (const f of ITALIC_FONTS) variants.push({ font: f, shear: 0 });
@@ -49,23 +56,27 @@ function renderTemplates(canvasFactory) {
   // letters U / n, so those glyphs get templates too -- each emitting the
   // plain-text operator this tool's syntax uses for it.
   const sources = ALPHABET.map(c => ({ ch: c, glyph: c })).concat([{ ch: 'U', glyph: '\u222A' }, { ch: 'n', glyph: '\u2229' }]);
-  for (const { ch, glyph } of sources) {
-    for (const v of variants) {
-      wctx.setTransform(1, 0, 0, 1, 0, 0);
-      wctx.fillStyle = '#fff'; wctx.fillRect(0, 0, SIZE, SIZE);
-      wctx.fillStyle = '#000'; wctx.font = v.font; wctx.textBaseline = 'alphabetic';
-      // right-leaning shear about the baseline, synthesizing an italic-ish
-      // slant on top of the upright fonts for in-between coverage
-      wctx.setTransform(1, 0, -v.shear, 1, v.shear * BASE, 0);
-      wctx.fillText(glyph, 14, BASE);
-      wctx.setTransform(1, 0, 0, 1, 0, 0);
-      const bbox = inkBBox(wctx.getImageData(0, 0, SIZE, SIZE).data, SIZE, SIZE);
-      if (!bbox) continue;
-      const norm = canvasFactory(NORM_SIZE, NORM_SIZE);
-      const nctx = norm.getContext('2d');
-      nctx.fillStyle = '#fff'; nctx.fillRect(0, 0, NORM_SIZE, NORM_SIZE);
-      drawCropScaled(nctx, work, bbox, NORM_SIZE);
-      templates.push({ ch, bitmap: blurBitmap(toBinaryBitmap(nctx.getImageData(0, 0, NORM_SIZE, NORM_SIZE).data, NORM_SIZE, NORM_SIZE), NORM_SIZE), aspect: bbox.w / bbox.h });
+  for (const R of TEMPLATE_RENDERS) {
+    const work = canvasFactory(R.size, R.size);
+    const wctx = work.getContext('2d');
+    for (const { ch, glyph } of sources) {
+      for (const v of variants) {
+        wctx.setTransform(1, 0, 0, 1, 0, 0);
+        wctx.fillStyle = '#fff'; wctx.fillRect(0, 0, R.size, R.size);
+        wctx.fillStyle = '#000'; wctx.font = v.font.replace(/(\d+)px/, (_, n) => Math.round(n * R.k) + 'px'); wctx.textBaseline = 'alphabetic';
+        // right-leaning shear about the baseline, synthesizing an italic-ish
+        // slant on top of the upright fonts for in-between coverage
+        wctx.setTransform(1, 0, -v.shear, 1, v.shear * R.base, 0);
+        wctx.fillText(glyph, R.x, R.base);
+        wctx.setTransform(1, 0, 0, 1, 0, 0);
+        const bbox = inkBBox(wctx.getImageData(0, 0, R.size, R.size).data, R.size, R.size);
+        if (!bbox) continue;
+        const norm = canvasFactory(NORM_SIZE, NORM_SIZE);
+        const nctx = norm.getContext('2d');
+        nctx.fillStyle = '#fff'; nctx.fillRect(0, 0, NORM_SIZE, NORM_SIZE);
+        drawCropScaled(nctx, work, bbox, NORM_SIZE);
+        templates.push({ ch, bitmap: blurBitmap(toBinaryBitmap(nctx.getImageData(0, 0, NORM_SIZE, NORM_SIZE).data, NORM_SIZE, NORM_SIZE), NORM_SIZE), aspect: bbox.w / bbox.h });
+      }
     }
   }
   return templates;
@@ -279,7 +290,19 @@ function buildLocalInk(canvas, top, bottom) {
   for (let g = 0; g < 256; g++) {
     if ((inverted ? g < 128 : g >= 128) && hist[g] > most) { most = hist[g]; bg = g; }
   }
-  const weakT = inverted ? 128 - 0.6 * (128 - bg) : 128 + 0.6 * (bg - 128);
+  // Where "ink" starts. Crisp text reaches full black, so the usual halfway
+  // point (128) is right. Small or blurry text never gets that dark -- thin
+  // strokes top out at a mid grey -- and a fixed 128 cuts them into
+  // fragments. So the cut is placed halfway between the background and the
+  // darkest ink actually present (a robust 0.4% quantile, so one stray dark
+  // pixel cannot drag it), within sane limits.
+  const total = w * h, tail = Math.max(1, Math.round(total * 0.004));
+  let acc = 0, extreme = inverted ? 255 : 0;
+  if (inverted) { for (let g = 255; g >= 0; g--) { acc += hist[g]; if (acc >= tail) { extreme = g; break; } } }
+  else { for (let g = 0; g < 256; g++) { acc += hist[g]; if (acc >= tail) { extreme = g; break; } } }
+  let cut = (bg + extreme) / 2;
+  cut = inverted ? Math.min(160, Math.max(96, cut)) : Math.min(160, Math.max(96, cut));
+  const weakT = inverted ? cut - 0.6 * (cut - bg) : cut + 0.6 * (bg - cut);
   const grayAt = (x, y) => {
     const ly = y - top;
     if (ly < 0 || ly >= h || x < 0 || x >= w) return null;
@@ -287,7 +310,7 @@ function buildLocalInk(canvas, top, bottom) {
     return (data[i] + data[i + 1] + data[i + 2]) / 3;
   };
   return {
-    strong: (x, y) => { const g = grayAt(x, y); return g !== null && (inverted ? g >= 128 : g < 128); },
+    strong: (x, y) => { const g = grayAt(x, y); return g !== null && (inverted ? g >= cut : g < cut); },
     weak: (x, y) => { const g = grayAt(x, y); return g !== null && (inverted ? g >= weakT : g < weakT); },
   };
 }
@@ -368,6 +391,25 @@ function buildGlyphGroups(comps) {
   const xOverlap = (a, b) => Math.min(a.maxX, b.maxX) - Math.max(a.minX, b.minX) + 1;
   const cxOf = c => (c.minX + c.maxX) / 2;
 
+  // Stacked fractions: a flat bar with a glyph above it and a glyph below it,
+  // both inside its span, is a fraction bar -- numerator over denominator. (An
+  // overline has nothing above it; an "=" has only thin bars around it.) Done
+  // before overlines, which would otherwise claim the bar as an overline of
+  // the denominator and leave the numerator loose ("2/3" read as "23'").
+  const fracs = [], fracUsed = new Set();
+  for (const f of comps) {
+    if (!isFlat(f) || fracUsed.has(f.id)) continue;
+    const inSpan = c => c !== f && !fracUsed.has(c.id) && cxOf(c) >= f.minX - 0.12 * W(f) && cxOf(c) <= f.maxX + 0.12 * W(f);
+    const digitSized = c => H(c) >= 0.3 * refH && !isFlat(c);
+    const byX = (a, b) => cxOf(a) - cxOf(b);
+    const num = comps.filter(c => inSpan(c) && digitSized(c) && c.maxY <= f.minY + 1 && f.minY - c.maxY <= 0.9 * refH).sort(byX);
+    const den = comps.filter(c => inSpan(c) && digitSized(c) && c.minY >= f.maxY - 1 && c.minY - f.maxY <= 0.9 * refH).sort(byX);
+    if (!num.length || !den.length) continue;
+    fracs.push({ bar: f, num, den });
+    [f, ...num, ...den].forEach(c => fracUsed.add(c.id));
+  }
+  comps = comps.filter(c => !fracUsed.has(c.id));
+
   const bars = [], barIds = new Set();
   for (const f of comps) {
     if (!isFlat(f)) continue;
@@ -428,6 +470,11 @@ function buildGlyphGroups(comps) {
     }
     groups.push(makeGlyphGroup([a]));
   }
+  for (const fr of fracs) {
+    const g = makeGlyphGroup([fr.bar, ...fr.num, ...fr.den]);
+    g.fraction = { num: fr.num.map(c => makeGlyphGroup([c])), den: fr.den.map(c => makeGlyphGroup([c])) };
+    groups.push(g);
+  }
   groups.sort((p, q) => p.cx - q.cx);
 
   for (const f of bars) {
@@ -441,6 +488,7 @@ function buildGlyphGroups(comps) {
     // inside that extra width, wrapping the whole run in "(...)'" instead
     // of marking just the one letter it was actually drawn over.
     const covered = groups.filter(g => {
+      if (g.fraction) return false;
       const overlap = Math.min(f.maxX, g.maxX) - Math.max(f.minX, g.minX) + 1;
       const gw = g.maxX - g.minX + 1;
       return overlap / gw >= 0.5 && g.minY >= f.maxY - refH * 0.15 && g.minY - f.maxY <= refH;
@@ -613,10 +661,11 @@ function leftEdgeRoughness(rows, width) {
 function bestScoreOf(rank) { let b = Infinity; for (const v of rank.values()) if (v < b) b = v; return b; }
 
 function splitTouching(info, groups, ink, canvasFactory, templates) {
-  const tallest = () => Math.max(...groups.map(g => g.maxY - g.minY + 1));
+  const plain = () => groups.filter(g => !g.fraction);
+  const tallest = () => Math.max(...plain().map(g => g.maxY - g.minY + 1));
   const typicalWidth = () => {
     const maxH = tallest();
-    return medianOf(groups.filter(g => {
+    return medianOf(plain().filter(g => {
       const h = g.maxY - g.minY + 1, w = g.maxX - g.minX + 1;
       return h >= 0.6 * maxH && w / h >= 0.4 && w / h <= 1.3;
     }).map(g => g.maxX - g.minX + 1));
@@ -640,7 +689,7 @@ function splitTouching(info, groups, ink, canvasFactory, templates) {
       // Two letters side by side are about as wide as they are tall or wider;
       // a single capital (even "A", "D", "M") stays under ~1.3x its height.
       // Without this gate, an ordinary wide letter could be cut in half.
-      if (g.ids.size !== 1 || g.repair || w < 1.45 * medW || w / h < 1.5 || h < 0.55 * maxH) continue;
+      if (g.fraction || g.ids.size !== 1 || g.repair || w < 1.45 * medW || w / h < 1.5 || h < 0.55 * maxH) continue;
       const [origId] = g.ids;
       const colInk = [];
       for (let x = g.minX; x <= g.maxX; x++) {
@@ -677,13 +726,21 @@ function splitTouching(info, groups, ink, canvasFactory, templates) {
 }
 
 const SET_LETTER = ch => /^[A-Z]$/.test(ch) && ch !== 'U';
+const LETTER_PRIOR = { O: 0.004, I: 0.004, Q: 0.004, L: 0.003, J: 0.003, V: 0.002, W: 0.002, M: 0.001, N: 0.001 };
+const DIGIT_TWIN = { '8': 'B', '5': 'S', '2': 'Z', '1': 'I', '6': 'G' };
 
 function recognizeOneBand(canvas, top, bottom, templates, canvasFactory) {
   const ink = buildLocalInk(canvas, top, bottom);
   const info = labelComponents(ink.strong, canvas.width, top, bottom);
   const groups = splitTouching(info, buildGlyphGroups(info.comps), ink, canvasFactory, templates);
-  const ranks = groups.map(g => rankGlyph(glyphBitmap(info, g, canvasFactory, ink.weak), g, templates));
-  const chars = ranks.map(r => pickBest(r));
+  // Numerator and denominator are numbers, so their glyphs are matched among
+  // digits only, left to right, and the fraction comes out as "num/den".
+  const fractionText = g => {
+    const digits = parts => parts.map(pg => pickBest(rankGlyph(glyphBitmap(info, pg, canvasFactory, ink.weak), pg, templates), ch => /[0-9.]/.test(ch))).join('');
+    return digits(g.fraction.num) + '/' + digits(g.fraction.den);
+  };
+  const ranks = groups.map(g => (g.fraction ? null : rankGlyph(glyphBitmap(info, g, canvasFactory, ink.weak), g, templates)));
+  const chars = groups.map((g, i) => (g.fraction ? fractionText(g) : pickBest(ranks[i])));
   const lastEq = chars.lastIndexOf('=');
   const exprEnd = lastEq === -1 ? chars.length : lastEq;
 
@@ -695,6 +752,7 @@ function recognizeOneBand(canvas, top, bottom, templates, canvasFactory) {
   // Within the expression itself (before the last "="):
   for (let i = 0; i < exprEnd; i++) {
     const g = groups[i];
+    if (g.fraction) continue;
     const rows = glyphRowProfile(info, g);
     // "(" and ")" differ from "|" by a gentle bulge; the match score alone
     // cannot see it (see glyphCurvature), so decide by the bulge itself.
@@ -708,6 +766,21 @@ function recognizeOneBand(canvas, top, bottom, templates, canvasFactory) {
       const cy = (g.minY + g.maxY) / 2;
       chars[i] = cy < (capTop + capBottom) / 2 ? "'" : ',';
     }
+    // A small tick up beside the letters is a prime, even when it scored best
+    // as a "1" (in a serif face the two look alike at small sizes).
+    if (chars[i] === '1' && capH && (g.maxY - g.minY + 1) < 0.55 * capH && (g.minY + g.maxY) / 2 < (capTop + capBottom) / 2) chars[i] = "'";
+    // Set names are overwhelmingly A, B, C, D...; an "O" or "I" or "Q" is rare.
+    // When two letters score almost the same, that decides it -- otherwise a
+    // "D" that matches "O" a hair better in some typeface comes out as "O".
+    if (SET_LETTER(chars[i])) {
+      let best = chars[i], bestScore = Infinity;
+      for (const [ch, sc] of ranks[i]) {
+        if (!SET_LETTER(ch)) continue;
+        const adj = sc + (LETTER_PRIOR[ch] || 0);
+        if (adj < bestScore) { bestScore = adj; best = ch; }
+      }
+      chars[i] = best;
+    }
     // In sans-serif type "|" and a capital "I" are the same bar; the bar used
     // for a condition runs from above the capitals to below the baseline, a
     // capital "I" only as tall as its neighbours.
@@ -718,7 +791,17 @@ function recognizeOneBand(canvas, top, bottom, templates, canvasFactory) {
     // really a "B", which the two glyphs' similar outlines make easy to miss.
     if (/[0-9]/.test(chars[i])) {
       const afterName = i > 0 && /[A-Z0-9]/.test(chars[i - 1]);
-      if (!afterName) chars[i] = pickBest(ranks[i], SET_LETTER) || chars[i];
+      if (!afterName) {
+        // The letter a digit gets mistaken for is not just any letter: an "8"
+        // here is a "B", a "5" an "S"... Whichever letter's outline happens to
+        // score best depends on the typeface the templates came from (an "8"
+        // was turning into "R" in one browser's fonts and "B" in another's),
+        // so the digit's own look-alike wins unless another letter is clearly better.
+        const best = pickBest(ranks[i], SET_LETTER);
+        const twin = DIGIT_TWIN[chars[i]];
+        const twinScore = twin ? ranks[i].get(twin) : undefined, bestScore = best ? ranks[i].get(best) : undefined;
+        chars[i] = twin && twinScore !== undefined && twinScore <= bestScore + 0.02 ? twin : (best || chars[i]);
+      }
       else if (chars[i] === '8' && leftEdgeRoughness(rows, g.maxX - g.minX + 1) < 0.045) chars[i] = 'B';
     }
   }
@@ -730,6 +813,7 @@ function recognizeOneBand(canvas, top, bottom, templates, canvasFactory) {
   if (lastEq !== -1) {
     // "," is allowed here too: Vietnamese writes decimals with a comma ("0,375").
     for (let i = lastEq + 1; i < chars.length; i++) {
+      if (groups[i].fraction) continue;
       const c = pickBest(ranks[i], ch => VALUE_CHARS.has(ch) || ch === ',');
       chars[i] = c === ',' ? '.' : c;
     }

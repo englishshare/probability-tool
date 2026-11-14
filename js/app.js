@@ -10,7 +10,7 @@ const state = {
   hypotheses: [],          // { node, value, key }
   independentGroups: [],   // { names: [...] }
   mutexPairs: [],          // [nameA, nameB]
-  partition: null,         // [names...] | null
+  partitions: [],          // [[names...], ...] -- several partitions may hold at once
   colorMap: new Map(),
   colorPalette: ['#7EB6D9', '#E38C7A', '#79C9A4', '#C9A6E0', '#E0B979', '#8FA9D9'],
 };
@@ -103,7 +103,7 @@ function serializeState() {
     hyps: state.hypotheses.map(x => ({ t: exprToText(x.node), v: x.value })),
     indep: state.independentGroups.map(g => g.names),
     mutex: state.mutexPairs,
-    partition: state.partition,
+    partitions: state.partitions,
   };
 }
 let saveTimer = null;
@@ -125,7 +125,8 @@ function applySnapshot(d) {
   }
   state.independentGroups = (d.indep || []).map(names => ({ names: names.slice() }));
   state.mutexPairs = (d.mutex || []).map(p => p.slice());
-  state.partition = d.partition ? d.partition.slice() : null;
+  // older saves kept a single partition under `partition`
+  state.partitions = (d.partitions || (d.partition ? [d.partition] : [])).map(p => p.slice());
   if (typeof d.expr === 'string') $('exprInput').value = d.expr;
   if (typeof d.latex === 'string') $('latexInput').value = d.latex;
   activateTab(d.mode || 'text', false);
@@ -138,14 +139,15 @@ function buildContext(over) {
   const hyps = (over && over.hypotheses) || state.hypotheses;
   const groups = (over && over.independentGroups) || state.independentGroups;
   const mutex = (over && over.mutexPairs) || state.mutexPairs;
-  const partition = over && 'partition' in over ? over.partition : state.partition;
+  const partitions = (over && over.partitions) || state.partitions;
   const knownProb = new Map();
   hyps.forEach(x => knownProb.set(x.key, x.value));
   return {
     knownProb,
     independentGroups: groups.map(g => new Set(g.names)),
     mutexPairs: new Set(mutex.map(p => pairKey(p[0], p[1]))),
-    partition,
+    partitions,
+    partition: partitions[0] || null,
   };
 }
 // A change is refused only if it is what makes the facts contradictory --
@@ -163,7 +165,7 @@ function getAllKnownAtoms() {
   state.hypotheses.forEach(x => collectAtoms(x.node, set));
   state.independentGroups.forEach(g => g.names.forEach(n => set.add(n)));
   state.mutexPairs.forEach(p => p.forEach(n => set.add(n)));
-  if (state.partition) state.partition.forEach(n => set.add(n));
+  state.partitions.forEach(p => p.forEach(n => set.add(n)));
   return [...set].sort();
 }
 
@@ -209,7 +211,7 @@ function removeWithUndo(label, mutate) {
 function renderHypothesesList() {
   const list = $('hypothesesList');
   list.innerHTML = '';
-  const total = state.hypotheses.length + state.independentGroups.length + state.mutexPairs.length + (state.partition ? 1 : 0);
+  const total = declarationCount() + state.hypotheses.length;
   $('hypCount').textContent = total ? `(${total})` : '';
   if (!total) { list.append(h('p', { class: 'hint empty-hint', text: 'Chưa có giả thiết nào. Thêm bên dưới hoặc nạp một ví dụ mẫu.' })); return; }
 
@@ -226,8 +228,8 @@ function renderHypothesesList() {
     () => removeWithUndo('Đã xóa khai báo độc lập', () => state.independentGroups.splice(i, 1)))));
   state.mutexPairs.forEach((p, i) => list.append(row(`Xung khắc: ${p.join(', ')}`, false, 'Xóa khai báo xung khắc ' + p.join(', '),
     () => removeWithUndo('Đã xóa khai báo xung khắc', () => state.mutexPairs.splice(i, 1)))));
-  if (state.partition) list.append(row(`Phân hoạch: ${state.partition.join(', ')}`, false, 'Xóa khai báo phân hoạch ' + state.partition.join(', '),
-    () => removeWithUndo('Đã xóa khai báo phân hoạch', () => { state.partition = null; })));
+  state.partitions.forEach((p, i) => list.append(row(`Phân hoạch: ${p.join(', ')}`, false, 'Xóa khai báo phân hoạch ' + p.join(', '),
+    () => removeWithUndo('Đã xóa khai báo phân hoạch', () => state.partitions.splice(i, 1)))));
 }
 
 // ---------------------------------------------------------------- dialog
@@ -240,33 +242,46 @@ function closeModal() {
   modalOpener = null;
 }
 
+// A dialog is a title, a description, a body and Cancel / Confirm. The body
+// is a set of choosable chips by default, or whatever `cfg.build` makes (a
+// form, an exercise). `cfg.onConfirm(value)` may return an error string (the
+// dialog stays open and shows it), { keepOpen, ok, message } to show feedback
+// without closing, or nothing to close.
 function openModal(cfg) {
   const bd = $('modalBackdrop'), box = $('modalContent');
   modalOpener = document.activeElement;
   const selected = [];
   box.innerHTML = '';
   const summary = h('p', { class: 'hint modal-summary', 'aria-live': 'polite' });
-  const errorEl = h('p', { class: 'field-error', role: 'alert', hidden: true });
+  const feedback = h('p', { class: 'field-error', role: 'alert', hidden: true });
   const confirmBtn = h('button', { type: 'button', class: 'btn-primary btn-compact', text: cfg.confirmLabel || 'Xác nhận', disabled: true });
   const chips = [];
+  let custom = null;
 
   const refresh = () => {
-    summary.textContent = selected.length ? 'Đã chọn: ' + selected.join(', ') : 'Chưa chọn biến cố nào.';
-    const full = cfg.max != null && selected.length >= cfg.max;
-    chips.forEach(c => {
-      const on = selected.includes(c.dataset.name);
-      c.setAttribute('aria-pressed', on ? 'true' : 'false');
-      c.classList.toggle('selected', on);
-      const blocked = full && !on;
-      c.disabled = blocked;
-      c.classList.toggle('disabled', blocked);
-    });
-    confirmBtn.disabled = selected.length < cfg.min;
-    errorEl.hidden = true;
+    if (custom) {
+      summary.textContent = custom.summary ? custom.summary() : '';
+      confirmBtn.disabled = !custom.ready();
+    } else {
+      summary.textContent = selected.length ? 'Đã chọn: ' + selected.join(', ') : 'Chưa chọn biến cố nào.';
+      const full = cfg.max != null && selected.length >= cfg.max;
+      chips.forEach(c => {
+        const on = selected.includes(c.dataset.name);
+        c.setAttribute('aria-pressed', on ? 'true' : 'false');
+        c.classList.toggle('selected', on);
+        const blocked = full && !on;
+        c.disabled = blocked;
+        c.classList.toggle('disabled', blocked);
+      });
+      confirmBtn.disabled = selected.length < cfg.min;
+    }
+    feedback.hidden = true;
   };
 
   box.append(h('h3', { id: 'modalTitle', text: cfg.title }), h('p', { class: 'hint', text: cfg.description }));
-  if (!cfg.atoms.length) {
+  if (cfg.build) {
+    custom = cfg.build(box, refresh, closeModal);
+  } else if (!cfg.atoms.length) {
     box.append(h('p', { class: 'hint', text: 'Chưa có biến cố nào. Hãy nhập biểu thức hoặc thêm giả thiết trước.' }));
   } else {
     const grid = h('div', { class: 'chip-grid', role: 'group', 'aria-label': 'Chọn biến cố' });
@@ -283,44 +298,62 @@ function openModal(cfg) {
     box.append(grid);
   }
   confirmBtn.addEventListener('click', () => {
-    const err = cfg.onConfirm(selected.slice());
-    if (err) { errorEl.textContent = err; errorEl.hidden = false; return; }
+    const res = cfg.onConfirm(custom ? custom.value() : selected.slice());
+    if (typeof res === 'string' && res) { feedback.textContent = res; feedback.classList.remove('field-ok'); feedback.hidden = false; return; }
+    if (res && res.keepOpen) { feedback.textContent = res.message; feedback.classList.toggle('field-ok', !!res.ok); feedback.hidden = false; return; }
     closeModal();
   });
-  box.append(summary, errorEl, h('div', { class: 'modal-actions' },
-    h('button', { type: 'button', class: 'btn btn-small', text: 'Hủy', onclick: closeModal }), confirmBtn));
+  box.append(summary, feedback, h('div', { class: 'modal-actions' },
+    h('button', { type: 'button', class: 'btn btn-small', text: cfg.cancelLabel || 'Hủy', onclick: closeModal }), confirmBtn));
 
   bd.hidden = false;
   refresh();
   modalKeyHandler = e => {
     if (e.key === 'Escape') { e.preventDefault(); closeModal(); return; }
+    if (e.key === 'Enter' && custom && e.target.tagName === 'INPUT' && !confirmBtn.disabled) { e.preventDefault(); confirmBtn.click(); return; }
     if (e.key !== 'Tab') return;
-    const f = [...box.querySelectorAll('button:not([disabled])')];
+    const f = [...box.querySelectorAll('button:not([disabled]), input:not([disabled])')];
     if (!f.length) return;
     const first = f[0], last = f[f.length - 1];
     if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   };
   bd.addEventListener('keydown', modalKeyHandler);
-  (chips[0] || box.querySelector('button')).focus();
+  ((custom && custom.focus) || chips[0] || box.querySelector('button')).focus();
 }
 
+function declarationCount() {
+  return state.independentGroups.length + state.mutexPairs.length + state.partitions.length;
+}
+
+// Adds a declaration, after checking that it does not make the facts
+// contradictory. Returns an error message, or null when accepted.
 function declare(kind, names) {
+  let problem = null, change = null;
   if (kind === 'indep') {
     const next = state.independentGroups.concat([{ names }]);
-    const problem = problemIntroducedBy({ independentGroups: next });
-    if (problem) return 'Khai báo này làm các dữ kiện mâu thuẫn nhau. ' + problem;
-    state.independentGroups = next;
+    problem = problemIntroducedBy({ independentGroups: next });
+    change = () => { state.independentGroups = next; };
   } else if (kind === 'mutex') {
-    const next = state.mutexPairs.concat([names]);
-    const problem = problemIntroducedBy({ mutexPairs: next });
-    if (problem) return 'Khai báo này làm các dữ kiện mâu thuẫn nhau. ' + problem;
-    state.mutexPairs = next;
+    // "pairwise exclusive" for k sets means each of the k(k-1)/2 pairs
+    const have = new Set(state.mutexPairs.map(p => pairKey(p[0], p[1])));
+    const fresh = [];
+    for (let i = 0; i < names.length; i++) for (let j = i + 1; j < names.length; j++) {
+      if (!have.has(pairKey(names[i], names[j]))) fresh.push([names[i], names[j]]);
+    }
+    const next = state.mutexPairs.concat(fresh);
+    problem = problemIntroducedBy({ mutexPairs: next });
+    change = () => { state.mutexPairs = next; };
   } else {
-    const problem = problemIntroducedBy({ partition: names });
-    if (problem) return 'Phân hoạch này không khớp với các giả thiết hiện có. ' + problem;
-    state.partition = names;
+    const next = state.partitions.concat([names]);
+    problem = problemIntroducedBy({ partitions: next });
+    change = () => { state.partitions = next; };
+    if (problem) problem = 'Phân hoạch này không khớp với các giả thiết hiện có. ' + problem;
+    else problem = null;
+    if (problem) return problem;
   }
+  if (problem) return 'Khai báo này làm các dữ kiện mâu thuẫn nhau. ' + problem;
+  change();
   renderHypothesesList();
   saveState();
   return null;
@@ -448,14 +481,12 @@ function handleImageFile(file) {
 }
 
 // ---------------------------------------------------------------- export
-function buildLatexSource(steps, queryLatex, finalResult) {
-  const finalLine = `${queryLatex} = ${finalResult.numeric != null ? fmtNum(finalResult.numeric) : finalResult.latex}`;
-  if (!steps.length) return finalLine;
-  return '\\begin{gathered}\n' + steps.map(s => s.eq).join(' \\\\\n') + ' \\\\\n' + finalLine + '\n\\end{gathered}';
-}
 function copyLatexSolution(steps, queryLatex, finalResult, btn) {
-  const tex = buildLatexSource(steps, queryLatex, finalResult);
-  const done = () => { const old = btn.textContent; btn.textContent = 'Đã sao chép ✓'; setTimeout(() => { btn.textContent = old; }, 1600); };
+  const tex = buildLatexSnippet(steps, queryLatex, finalResult);
+  const done = () => {
+    const old = btn.textContent; btn.textContent = 'Đã sao chép ✓'; setTimeout(() => { btn.textContent = old; }, 1600);
+    showToast('Đã sao chép mã LaTeX thuần (không kèm màu). Cần gói amsmath khi dán vào tài liệu của bạn.');
+  };
   const fallback = () => showToast('Trình duyệt chặn sao chép tự động. Hãy dùng nút “Tải .tex” thay thế.', { kind: 'error' });
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(tex).then(done).catch(fallback);
   else fallback();
@@ -467,7 +498,11 @@ function downloadBlob(blob, name) {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 function downloadLatexFile(steps, queryLatex, finalResult) {
-  downloadBlob(new Blob([buildLatexSource(steps, queryLatex, finalResult)], { type: 'text/x-tex;charset=utf-8' }), 'loi-giai.tex');
+  const givens = state.hypotheses.map(x => ({ latex: hypothesisLatex(x.node, x.value) }))
+    .concat(state.independentGroups.map(g => ({ text: 'Độc lập: ' + g.names.join(', ') })))
+    .concat(state.mutexPairs.map(p => ({ text: 'Xung khắc: ' + p.join(', ') })))
+    .concat(state.partitions.map(p => ({ text: 'Phân hoạch: ' + p.join(', ') })));
+  downloadBlob(new Blob([buildLatexDocument(steps, queryLatex, finalResult, givens)], { type: 'text/x-tex;charset=utf-8' }), 'loi-giai.tex');
 }
 function downloadResultsPng(el) {
   if (typeof html2canvas === 'undefined') { showToast('Không tải được thư viện tạo ảnh (cần mạng).', { kind: 'error' }); return; }
@@ -556,6 +591,15 @@ function runSolve() {
         const wrap = h('div', { id: 'vennSvgContainer', class: 'venn-wrap', role: 'img', 'aria-label': 'Biểu đồ Venn của ' + venn.names.join(', ') + '; bảng số liệu các vùng nằm bên dưới' });
         wrap.innerHTML = diagram.svg;
         body.append(wrap);
+        const copyTikz = h('button', { type: 'button', class: 'btn btn-small', text: 'Sao chép mã TikZ' });
+        copyTikz.addEventListener('click', () => {
+          const code = renderVennTikz(venn.names, venn.regions, colorOf);
+          const ok = () => showToast('Đã sao chép mã TikZ của biểu đồ Venn (cần \\usepackage{tikz}).');
+          const bad = () => showToast('Trình duyệt chặn sao chép tự động. Hãy dùng nút “Tải TikZ (.tex)”.', { kind: 'error' });
+          if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(code).then(ok).catch(bad); else bad();
+        });
+        body.append(h('div', { class: 'result-tools venn-tools' }, copyTikz,
+          h('button', { type: 'button', class: 'btn btn-small', text: 'Tải TikZ (.tex)', onclick: () => downloadBlob(new Blob([renderVennTikzDocument(venn.names, venn.regions, colorOf)], { type: 'text/x-tex;charset=utf-8' }), 'venn.tex') })));
         const tbl = renderVennTable(venn.names, venn.regions, colorOf);
         const det = h('details', { class: 'venn-data' }, h('summary', { text: 'Xem bảng số liệu các vùng' }));
         const tw = h('div', { class: 'table-wrap' }); tw.innerHTML = tbl.html; det.append(tw);
@@ -573,6 +617,151 @@ function runSolve() {
   }
 }
 
+// ---------------------------------------------------------------- 2x2 table
+// Four joint probabilities (or three, with the last implied) become the four
+// hypotheses P(A∩B), P(A∩B'), P(A'∩B), P(A'∩B') at once.
+function addContingency(v) {
+  const nameOk = n => /^[A-TV-Z][A-Za-z0-9]{0,3}$/.test(n);
+  if (!nameOk(v.a) || !nameOk(v.b) || v.a === v.b) return 'Tên hai biến cố phải khác nhau, bắt đầu bằng một chữ cái hoa (trừ U), ví dụ A và B.';
+  const vals = v.cells.map(t => (t.trim() === '' ? null : parseValueInput(t)));
+  const blanks = vals.filter(x => x === null).length;
+  if (vals.some(x => x !== null && (isNaN(x) || x < 0 || x > 1))) return 'Mỗi ô phải là một số (hoặc phân số) trong đoạn [0, 1].';
+  if (blanks > 1) return 'Chỉ được để trống nhiều nhất một ô (ô còn lại tự suy ra từ tổng bằng 1).';
+  if (blanks === 1) {
+    const rest = 1 - vals.reduce((s, x) => s + (x || 0), 0);
+    if (rest < -1e-9 || rest > 1 + 1e-9) return 'Ba ô đã nhập có tổng vượt quá 1, không còn chỗ cho ô trống.';
+    vals[vals.indexOf(null)] = Math.max(0, rest);
+  } else if (Math.abs(vals.reduce((s, x) => s + x, 0) - 1) > 1e-6) {
+    return 'Bốn ô phải có tổng bằng 1 (hiện là ' + fmtNum(vals.reduce((s, x) => s + x, 0)) + ').';
+  }
+  const exprs = [`${v.a} n ${v.b}`, `${v.a} n ${v.b}'`, `${v.a}' n ${v.b}`, `${v.a}' n ${v.b}'`];
+  const next = state.hypotheses.slice();
+  exprs.forEach((e, i) => {
+    const node = flatten(parseQuery(e).arg), key = canonicalKey(node);
+    const entry = { node, value: vals[i], key }, at = next.findIndex(x => x.key === key);
+    if (at >= 0) next[at] = entry; else next.push(entry);
+  });
+  const problem = problemIntroducedBy({ hypotheses: next });
+  if (problem) return 'Bảng này mâu thuẫn với các giả thiết đã có. ' + problem;
+  state.hypotheses = next;
+  renderHypothesesList();
+  saveState();
+  showToast('Đã thêm 4 giả thiết từ bảng 2×2.');
+  return null;
+}
+
+function openContingencyDialog() {
+  openModal({
+    title: 'Nhập bảng 2×2', confirmLabel: 'Thêm vào giả thiết',
+    description: 'Điền xác suất của từng ô (số thập phân hoặc phân số). Có thể để trống một ô, ô đó sẽ tự suy ra từ tổng bằng 1.',
+    build: (box, refresh) => {
+      const field = (cls, label, value, mode) => h('input', { type: 'text', class: cls, 'aria-label': label, value, inputmode: mode || 'decimal', spellcheck: 'false', autocomplete: 'off', oninput: refresh });
+      const nameA = field('tbl-name', 'Tên biến cố thứ nhất', 'A', 'text'), nameB = field('tbl-name', 'Tên biến cố thứ hai', 'B', 'text');
+      nameA.value = 'A'; nameB.value = 'B';
+      nameA.maxLength = nameB.maxLength = 4;
+      const cells = ['P(A ∩ B)', "P(A ∩ B')", "P(A' ∩ B)", "P(A' ∩ B')"].map(l => field('tbl-cell', 'Xác suất ' + l, '', 'decimal'));
+      // the row and column headings follow the names being typed
+      const colB = h('th', { scope: 'col' }), colNotB = h('th', { scope: 'col' });
+      const rowA = h('th', { scope: 'row' }), rowNotA = h('th', { scope: 'row' });
+      const relabel = () => {
+        const a = nameA.value.trim() || 'A', b = nameB.value.trim() || 'B';
+        colB.textContent = 'trong ' + b; colNotB.textContent = 'không trong ' + b;
+        rowA.textContent = 'trong ' + a; rowNotA.textContent = 'không trong ' + a;
+      };
+      nameA.addEventListener('input', relabel); nameB.addEventListener('input', relabel); relabel();
+      const table = h('table', { class: 'tbl22' },
+        h('thead', null, h('tr', null, h('td'), colB, colNotB)),
+        h('tbody', null,
+          h('tr', null, rowA, h('td', null, cells[0]), h('td', null, cells[1])),
+          h('tr', null, rowNotA, h('td', null, cells[2]), h('td', null, cells[3]))));
+      box.append(h('div', { class: 'tbl-names' }, h('label', null, 'Biến cố 1', nameA), h('label', null, 'Biến cố 2', nameB)), table);
+      const total = () => cells.reduce((s, c) => s + (c.value.trim() === '' ? 0 : (parseValueInput(c.value) || 0)), 0);
+      return {
+        ready: () => cells.filter(c => c.value.trim() !== '').length >= 3,
+        summary: () => 'Tổng các ô đã nhập: ' + fmtNum(total()),
+        value: () => ({ a: nameA.value.trim(), b: nameB.value.trim(), cells: cells.map(c => c.value) }),
+        focus: cells[0],
+      };
+    },
+    onConfirm: v => addContingency(v),
+  });
+}
+
+// ---------------------------------------------------------------- practice
+function loadExerciseIntoTool(ex) {
+  state.hypotheses = ex.facts.map(([e, val]) => { const node = flatten(parseQuery(e).arg); return { node, value: parseValueInput(val), key: canonicalKey(node) }; });
+  state.independentGroups = ex.indep.map(names => ({ names: names.slice() }));
+  state.mutexPairs = [];
+  ex.mutex.forEach(g => { for (let i = 0; i < g.length; i++) for (let j = i + 1; j < g.length; j++) state.mutexPairs.push([g[i], g[j]]); });
+  state.partitions = ex.partitions.map(p => p.slice());
+  $('exprInput').value = ex.question;
+  activateTab('text', false);
+  showHypError('');
+  renderHypothesesList();
+  saveState();
+  runSolve();
+}
+
+function openPracticeDialog() {
+  let seed = (Date.now() % 1000003) | 0;
+  let ex = makeExercise(seed);
+  openModal({
+    title: 'Luyện tập', confirmLabel: 'Kiểm tra', cancelLabel: 'Đóng',
+    description: 'Đề ngẫu nhiên, luôn có đáp án. Tự tính rồi kiểm tra; cần xem cách giải thì nạp đề vào công cụ.',
+    build: (box, refresh, close) => {
+      const factsEl = h('ul', { class: 'practice-facts' });
+      const questionEl = h('p', { class: 'practice-question' });
+      const hintEl = h('p', { class: 'hint', hidden: true });
+      const answer = h('input', { type: 'text', class: 'practice-answer', 'aria-label': 'Đáp án của bạn (số thập phân hoặc phân số)', placeholder: 'Đáp án: 0.35 hoặc 7/20', inputmode: 'decimal', spellcheck: 'false', autocomplete: 'off', oninput: refresh });
+      const render = () => {
+        factsEl.innerHTML = '';
+        ex.facts.forEach(([e, val]) => { const li = h('li'); const node = flatten(parseQuery(e).arg); renderKatexTo(li, hypothesisLatex(node, parseValueInput(val)), false); factsEl.append(li); });
+        ex.indep.forEach(g => factsEl.append(h('li', { text: g.join(', ') + ' độc lập với nhau' })));
+        ex.mutex.forEach(g => factsEl.append(h('li', { text: g.join(', ') + ' đôi một xung khắc' })));
+        ex.partitions.forEach(p => factsEl.append(h('li', { text: p.join(', ') + ' là một phân hoạch' })));
+        questionEl.textContent = '';
+        questionEl.append('Tính ');
+        const q = h('span'); renderKatexTo(q, toProbLatex(flatten(parseQuery(ex.question).arg), colorOf), false); questionEl.append(q);
+        hintEl.textContent = 'Gợi ý: ' + ex.hint; hintEl.hidden = true;
+        answer.value = '';
+        refresh();
+      };
+      box.append(factsEl, questionEl, answer, hintEl, h('div', { class: 'practice-actions' },
+        h('button', { type: 'button', class: 'btn btn-small', text: 'Gợi ý', onclick: () => { hintEl.hidden = !hintEl.hidden; } }),
+        h('button', { type: 'button', class: 'btn btn-small', text: 'Đề khác', onclick: () => { seed += 7919; ex = makeExercise(seed); render(); answer.focus(); } }),
+        h('button', { type: 'button', class: 'btn btn-small', text: 'Xem lời giải trong công cụ', onclick: () => { const cur = ex; close(); loadExerciseIntoTool(cur); } })));
+      render();
+      return { ready: () => answer.value.trim() !== '', value: () => answer.value, focus: answer, summary: () => '' };
+    },
+    onConfirm: text => answerMatches(ex, text)
+      ? { keepOpen: true, ok: true, message: 'Chính xác! Đáp án là ' + fmtNum(ex.answer) + '. Bấm “Đề khác” để làm tiếp.' }
+      : { keepOpen: true, ok: false, message: 'Chưa đúng, thử lại nhé (hoặc bấm “Gợi ý”). Đáp án được chấp nhận sai số nhỏ khi làm tròn.' },
+  });
+}
+
+// ---------------------------------------------------------------- share
+function shareUrl() {
+  const base = location.href.split('#')[0];
+  return base + '#s=' + encodeShareState(serializeState());
+}
+function shareLink() {
+  const url = shareUrl();
+  const done = () => showToast(location.protocol === 'file:'
+    ? 'Đã sao chép liên kết, nhưng trang đang mở từ máy bạn nên người khác chưa mở được. Hãy đưa trang lên web (GitHub Pages) hoặc gửi tệp .html kèm liên kết.'
+    : 'Đã sao chép liên kết. Ai mở liên kết sẽ thấy đúng bài toán này (dữ liệu nằm trong liên kết, không gửi lên máy chủ).');
+  const fail = () => { try { history.replaceState(null, '', url); } catch (e) { /* ignore */ } showToast('Không sao chép tự động được; liên kết đã nằm trên thanh địa chỉ — hãy sao chép từ đó.', { kind: 'error' }); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done).catch(fail); else fail();
+}
+function loadFromHash() {
+  const m = location.hash.match(/^#s=([A-Za-z0-9_-]+)$/);
+  const d = m && decodeShareState(m[1]);
+  if (!d) return false;
+  applySnapshot(d);
+  showToast('Đã nạp bài toán từ liên kết.');
+  runSolve();
+  return true;
+}
+
 // ---------------------------------------------------------------- examples
 const EXAMPLES = [
   { id: 'pie2', label: 'Bù trừ — 2 biến cố', expr: 'P(A U B)', facts: [['A', 0.5], ['B', 0.3], ['A n B', 0.1]] },
@@ -581,21 +770,21 @@ const EXAMPLES = [
   { id: 'mutex', label: 'Hai biến cố xung khắc', expr: 'P(A U B)', facts: [['A', 0.3], ['B', 0.2]], mutex: [['A', 'B']] },
   { id: 'cond', label: 'Xác suất có điều kiện', expr: 'P(B|A)', facts: [['A', 0.5], ['AB', 0.2]] },
   { id: 'inverse', label: 'Suy ngược: tìm P(A∩B) từ P(A∪B)', expr: 'P(A n B)', facts: [['A', 0.5], ['B', 0.6], ['A U B', 0.8]] },
-  { id: 'bayes', label: 'Bayes & xác suất toàn phần', expr: 'P(B1|A)', facts: [['B1', 0.3], ['B2', 0.5], ['B3', 0.2], ['A|B1', 0.1], ['A|B2', 0.2], ['A|B3', 0.05]], partition: ['B1', 'B2', 'B3'] },
+  { id: 'bayes', label: 'Bayes & xác suất toàn phần', expr: 'P(B1|A)', facts: [['B1', 0.3], ['B2', 0.5], ['B3', 0.2], ['A|B1', 0.1], ['A|B2', 0.2], ['A|B3', 0.05]], partitions: [['B1', 'B2', 'B3']] },
   { id: 'four', label: '4 biến cố, dữ kiện điều kiện ẩn', expr: 'P(A U B U C U D)', facts: [['A', 0.3], ['B', 0.3], ['C', 0.4], ['D', 0.4], ['A n B', 0.1], ['A n C', 0.1], ['A n D', 0.1], ['B n C', 0.1], ['B n D', 0.1], ['C|D', 0.375], ['A n B n C', 0.03], ['A n B n D', 0.03], ['C n D | A', '2/15'], ['D | B n C', 0.4], ['A n B n C n D', 0.01]] },
 ];
 
 function loadExample(id, solve) {
   const ex = EXAMPLES.find(e => e.id === id);
   if (!ex) return;
-  state.hypotheses = []; state.independentGroups = []; state.mutexPairs = []; state.partition = null;
+  state.hypotheses = []; state.independentGroups = []; state.mutexPairs = []; state.partitions = [];
   ex.facts.forEach(([e, v]) => {
     const node = flatten(parseQuery(e).arg);
     state.hypotheses.push({ node, value: parseValueInput(String(v)), key: canonicalKey(node) });
   });
   (ex.indep || []).forEach(names => state.independentGroups.push({ names }));
   (ex.mutex || []).forEach(p => state.mutexPairs.push(p));
-  state.partition = ex.partition || null;
+  state.partitions = (ex.partitions || []).map(p => p.slice());
   $('exprInput').value = ex.expr;
   activateTab('text', false);
   showHypError('');
@@ -644,8 +833,8 @@ function init() {
     atoms: getAllKnownAtoms(), min: 2, max: null, confirmLabel: 'Xác nhận', onConfirm: names => declare('indep', names),
   }));
   $('addMutexBtn').addEventListener('click', () => openModal({
-    title: 'Khai báo hai biến cố xung khắc', description: 'Chọn đúng 2 biến cố không thể cùng xảy ra (giao bằng rỗng).',
-    atoms: getAllKnownAtoms(), min: 2, max: 2, confirmLabel: 'Xác nhận', onConfirm: names => declare('mutex', names),
+    title: 'Khai báo các biến cố xung khắc', description: 'Chọn từ 2 biến cố trở lên đôi một không thể cùng xảy ra (từng cặp có giao bằng rỗng). Chọn k biến cố sẽ khai báo cả k(k−1)/2 cặp.',
+    atoms: getAllKnownAtoms(), min: 2, max: null, confirmLabel: 'Xác nhận', onConfirm: names => declare('mutex', names),
   }));
   $('setPartitionBtn').addEventListener('click', () => openModal({
     title: 'Khai báo một phân hoạch', description: 'Chọn các biến cố đôi một xung khắc và hợp lại là cả không gian mẫu (cần cho xác suất toàn phần và Bayes).',
@@ -653,9 +842,9 @@ function init() {
   }));
   $('modalBackdrop').addEventListener('mousedown', e => { if (e.target === $('modalBackdrop')) closeModal(); });
   $('clearHypBtn').addEventListener('click', () => {
-    const n = state.hypotheses.length + state.independentGroups.length + state.mutexPairs.length + (state.partition ? 1 : 0);
+    const n = state.hypotheses.length + declarationCount();
     if (!n) return;
-    removeWithUndo(`Đã xóa ${n} giả thiết và khai báo`, () => { state.hypotheses = []; state.independentGroups = []; state.mutexPairs = []; state.partition = null; });
+    removeWithUndo(`Đã xóa ${n} giả thiết và khai báo`, () => { state.hypotheses = []; state.independentGroups = []; state.mutexPairs = []; state.partitions = []; });
     showHypError('');
   });
 
@@ -684,8 +873,15 @@ function init() {
     e.preventDefault(); activateTab('image', false); handleImageFile(item.getAsFile());
   });
 
-  const saved = loadSavedState();
-  if (saved) applySnapshot(saved); else loadExample('pie3', false);
+  $('shareBtn').addEventListener('click', shareLink);
+  $('practiceBtn').addEventListener('click', openPracticeDialog);
+  $('tableBtn').addEventListener('click', openContingencyDialog);
+
+  // a shared link wins over whatever was saved here; otherwise resume the saved work
+  if (!loadFromHash()) {
+    const saved = loadSavedState();
+    if (saved) applySnapshot(saved); else loadExample('pie3', false);
+  }
   renderHypothesesList();
   if (typeof katex === 'undefined') showToast('Chưa tải được KaTeX (cần mạng lần đầu) nên công thức tạm hiện dưới dạng mã LaTeX.', { kind: 'error', timeout: 9000 });
 }
