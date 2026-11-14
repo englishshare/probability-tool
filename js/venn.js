@@ -9,7 +9,10 @@ function collectAtoms(node, out) {
   if (node.type === 'ATOM') out.add(node.name);
   else if (node.type === 'COMPLEMENT') collectAtoms(node.arg, out);
   else if (node.type === 'UNION' || node.type === 'INTERSECT') node.args.forEach(a => collectAtoms(a, out));
-  else if (node.type === 'COND') { collectAtoms(node.arg, out); collectAtoms(node.given, out); }
+  else if (node.type === 'COND') {
+     collectAtoms(node.arg, out);
+     collectAtoms(node.given, out);
+  }
   return out;
 }
 
