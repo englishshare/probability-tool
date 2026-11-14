@@ -31,7 +31,10 @@ function flatten(node) {
     args = args.filter(a => a.type !== absorbed);
     if (args.length === 0) return { type: absorbed };
     const seen = new Map();
-    for (const a of args) { const k = canonicalKey(a); if (!seen.has(k)) seen.set(k, a); }
+    for (const a of args) {
+       const k = canonicalKey(a);
+       if (!seen.has(k)) seen.set(k, a);
+    }
     args = [...seen.values()];
     if (args.length === 1) return args[0];
     args.sort((x, y) => canonicalKey(x) < canonicalKey(y) ? -1 : canonicalKey(x) > canonicalKey(y) ? 1 : 0);
@@ -132,18 +135,30 @@ function parseCanonicalKey(key) {
   let i = 0;
   function expr() {
     const c = key[i];
-    if (c === '~') { i++; return { type: 'COMPLEMENT', arg: expr() }; }
+    if (c === '~') {
+       i++;
+       return { type: 'COMPLEMENT', arg: expr() };
+    }
     if (c === '(') {
       i++;
       const args = [expr()];
       let op = null;
-      while (key[i] === '∪' || key[i] === '∩') { op = key[i]; i++; args.push(expr()); }
+      while (key[i] === '∪' || key[i] === '∩') {
+         op = key[i];
+         i++;
+         args.push(expr());
+      }
       if (key[i] !== ')') throw new Error('bad key: ' + key);
       i++;
       return op ? { type: op === '∪' ? 'UNION' : 'INTERSECT', args } : args[0];
     }
-    if (c === '∅') { i++; return { type: 'EMPTY' }; }
-    if (c === 'Ω') { i++; return { type: 'UNIVERSE' }; }
+    if (c === '∅') {
+       i++;
+       return { type: 'EMPTY' };
+    }
+    if (c === 'Ω') {
+       i++; return { type: 'UNIVERSE' };
+    }
     let j = i;
     while (j < key.length && '()∪∩~|'.indexOf(key[j]) === -1) j++;
     if (j === i) throw new Error('bad key: ' + key);
