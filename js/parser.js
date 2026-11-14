@@ -10,7 +10,10 @@ function tokenize(src) {
   const isDigit = c => /[0-9]/.test(c);
   while (i < src.length) {
     const c = src[i];
-    if (/\s/.test(c)) { i++; continue; }
+    if (/\s/.test(c)) {
+       i++;
+       continue;
+    }
     if (c === '\\') {
       const rest = src.slice(i);
       const cmds = [
@@ -23,7 +26,12 @@ function tokenize(src) {
       ];
       let matched = false;
       for (const [pat, type] of cmds) {
-        if (rest.startsWith(pat)) { toks.push({ type }); i += pat.length; matched = true; break; }
+        if (rest.startsWith(pat)) {
+           toks.push({ type });
+           i += pat.length;
+           matched = true;
+           break;
+        }
       }
       if (matched) continue;
       const named = rest.match(/^\\([A-Za-z]+)/);
@@ -32,16 +40,39 @@ function tokenize(src) {
         if (['left', 'right', 'displaystyle', 'textstyle', 'quad', 'qquad', 'big', 'Big', 'bigl', 'bigr', 'Bigl', 'Bigr'].includes(named[1])) { i += named[0].length; continue; }
         throw new Error('Lỗi cú pháp: lệnh LaTeX \\' + named[1] + ' chưa được hỗ trợ.');
       }
-      if (/^\\[,;:! ]/.test(rest) && rest[1] !== ' ') { i += 2; continue; }   // LaTeX spacing
+      if (/^\\[,;:! ]/.test(rest) && rest[1] !== ' ') {
+         i += 2;
+         continue;
+      }   // LaTeX spacing
       toks.push({ type: 'DIFF' });                                              // a bare "\" is set difference
       i++;
       continue;
     }
-    if (c === '{') { toks.push({ type: 'LBRACE' }); i++; continue; }
-    if (c === '}') { toks.push({ type: 'RBRACE' }); i++; continue; }
-    if (c === '(') { toks.push({ type: 'LPAREN' }); i++; continue; }
-    if (c === ')') { toks.push({ type: 'RPAREN' }); i++; continue; }
-    if (c === "'") { toks.push({ type: 'PRIME' }); i++; continue; }
+    if (c === '{') {
+       toks.push({ type: 'LBRACE' });
+       i++;
+       continue;
+    }
+    if (c === '}') {
+       toks.push({ type: 'RBRACE' });
+       i++;
+       continue;
+    }
+    if (c === '(') {
+       toks.push({ type: 'LPAREN' });
+       i++;
+       continue;
+    }
+    if (c === ')') {
+       toks.push({ type: 'RPAREN' });
+       i++;
+       continue;
+    }
+    if (c === "'") {
+       toks.push({ type: 'PRIME' });
+       i++;
+       continue;
+    }
     if (c === '^') {
       let j = i + 1;
       if (src[j] === '{') {
@@ -140,8 +171,15 @@ function tokenize(src) {
     }
     if (isLetter(c)) {
       let j = i, s = '';
-      while (j < src.length && isLetter(src[j])) { s += src[j]; j++; }
-      if (s === 'U' || s === 'u') { toks.push({ type: 'UNION' }); i = j; continue; }
+      while (j < src.length && isLetter(src[j])) {
+         s += src[j];
+         j++;
+      }
+      if (s === 'U' || s === 'u') {
+         toks.push({ type: 'UNION' });
+         i = j;
+         continue;
+      }
       // A capital "N" standing alone between two operands ("A N B") is the
       // usual way to type the intersection sign in capitals; but "N" can also
       // just be a set's name, so it only counts as the operator when there is
@@ -151,7 +189,11 @@ function tokenize(src) {
         const operandBefore = last && ['ATOM', 'RPAREN', 'PRIME', 'RBRACE', 'EMPTY', 'UNIVERSE'].includes(last.type);
         const after = src.slice(j).match(/^\s*(\S)/);
         const operandAfter = after && /[A-Za-z(\\∅Ω]/.test(after[1]);
-        if (operandBefore && operandAfter) { toks.push({ type: 'INTERSECT' }); i = j; continue; }
+        if (operandBefore && operandAfter) {
+           toks.push({ type: 'INTERSECT' });
+           i = j;
+           continue;
+        }
       }
       if (s === 'n') {
          toks.push({ type: 'INTERSECT' });
@@ -210,7 +252,8 @@ function tokenize(src) {
         toks.push({ type: 'ATOM', name: letter + (isLast ? trailingDigits : '') });
         prevWasAtom = true;
       }
-      i = k; continue;
+      i = k;
+      continue;
     }
     // Anything else is a symbol this tool does not understand. Quietly
     // skipping it used to turn "A|~B" into "A|B" and "A + B" into A∩B --
@@ -335,8 +378,17 @@ function parseQuery(str) {
   if (toks[1] && toks[1].type === 'LPAREN') {
     let depth = 0, start = -1, end = -1;
     for (let k = 1; k < toks.length; k++) {
-      if (toks[k].type === 'LPAREN') { if (depth === 0) start = k; depth++; }
-      else if (toks[k].type === 'RPAREN') { depth--; if (depth === 0) { end = k; break; } }
+      if (toks[k].type === 'LPAREN') {
+         if (depth === 0) start = k;
+         depth++;
+      }
+      else if (toks[k].type === 'RPAREN') {
+         depth--;
+         if (depth === 0) {
+            end = k;
+            break;
+         }
+      }
     }
     if (start === -1 || end === -1) throw new Error('Lỗi cú pháp: thiếu dấu ngoặc trong P(...)');
     if (end !== toks.length - 1) throw new Error('Lỗi cú pháp: còn dư ký hiệu sau dấu ngoặc đóng của P(...)');
