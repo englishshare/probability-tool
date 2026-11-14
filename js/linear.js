@@ -64,7 +64,10 @@ class LinearSystem {
       }
     }
     let pivot = -1, best = LIN_TOL;
-    for (let j = 0; j < this.N; j++) if (Math.abs(v[j]) > best) { best = Math.abs(v[j]); pivot = j; }
+    for (let j = 0; j < this.N; j++) if (Math.abs(v[j]) > best) {
+       best = Math.abs(v[j]);
+       pivot = j;
+    }
     if (pivot === -1) {
       if (Math.abs(b) > 1e-7 && !this.conflict) {
         this.conflict = { meta, involved: comb.map((c, t) => ({ c, t })).filter(x => Math.abs(x.c) > LIN_TOL && x.t !== k).map(x => this.origin[x.t]) };
@@ -137,7 +140,11 @@ function buildLinearModel(ctx, extraAtoms) {
   const atoms = new Set(extraAtoms || []);
   const facts = [];
   for (const [key, value] of ctx.knownProb) {
-    try { const node = parseCanonicalKey(key); facts.push({ node, value }); collectAtoms(node, atoms); } catch (e) { /* skip unreadable key */ }
+    try {
+       const node = parseCanonicalKey(key);
+       facts.push({ node, value });
+       collectAtoms(node, atoms);
+    } catch (e) { /* skip unreadable key */ }
   }
   const mutex = [];
   for (const pk of ctx.mutexPairs || []) {
