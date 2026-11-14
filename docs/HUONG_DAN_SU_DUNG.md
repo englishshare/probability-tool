@@ -14,8 +14,8 @@ Cách nhanh nhất để làm quen: chọn một mục trong ô **Ví dụ mẫu
 
 | Gõ | Nghĩa |
 | --- | --- |
-| `U` | hợp ∪ |
-| `n` | giao ∩ |
+| `U` hoặc `u` | hợp ∪ |
+| `n` (hoặc `N` đứng giữa hai biểu thức) | giao ∩ |
 | `'` hoặc `^c` | phần bù |
 | `\` | hiệu tập hợp (`A \ B` = `A n B'`) |
 | `\|` | điều kiện (`A\|B` là P(A \| B)) |
@@ -35,7 +35,8 @@ Chọn ảnh, kéo-thả vào khung, hoặc **dán ảnh chụp màn hình bằn
 - Ảnh nhiều dòng (ví dụ vài dòng `P(A) = 0.6`) → mỗi dòng hiện thành một thẻ gồm **ảnh cắt của dòng đó** và **ô chữ nhận diện được — bạn sửa trực tiếp** nếu sai. Dòng có dạng `biểu thức = số` được gắn nhãn *dạng giả thiết* và có nút **+ Thêm giả thiết**; có thêm nút **Thêm tất cả** khi nhiều dòng cùng dạng.
 - Đọc được: chữ in/gõ máy rõ nét, **chữ nghiêng kiểu công thức** (Word Equation, LaTeX), chữ có chân (Times New Roman) kể cả khi các chữ gần như dính nhau, nền trắng hoặc nền tối, ký hiệu ∪ ∩ thật, **gạch ngang trên đầu chữ** (phần bù: C̄ → `C'`). Phần sau dấu `=` luôn được đọc như số, nên chữ số mảnh không còn bị đọc thành chữ cái.
 - Mẹo để chính xác hơn: cắt sát phần chữ, phóng to khi chụp, tránh ảnh mờ/xiên.
-- Không đọc được: chữ viết tay, phân số xếp chồng (tử trên mẫu dưới). Hãy gõ phân số dạng `3/8` ở ô giá trị.
+- **Phân số xếp chồng** (tử trên – gạch – mẫu dưới) được đọc thành `tử/mẫu`, ví dụ dòng `P(A|B̄) = ⅔` ra `P(A|B')=2/3`; chỉ số dưới (`B₁`) ra `B1`.
+- Không đọc được: chữ viết tay, ảnh quá nhỏ/mờ (chữ cao dưới khoảng 10 điểm ảnh — hãy phóng to hoặc chụp lại rõ hơn).
 
 > Nhận diện ảnh không bao giờ chắc chắn 100%. **Luôn nhìn lại chữ nhận diện được** trước khi bấm Giải.
 
@@ -57,8 +58,8 @@ Công cụ kiểm tra giả thiết mới cùng với những gì đã có. Nế
 Khi đề bài nói… hãy dùng nút:
 
 - **+ Độc lập** — chọn ≥ 2 biến cố độc lập với nhau. Công cụ dùng `P(giao) = tích` khi biết các xác suất thành phần.
-- **+ Xung khắc** — chọn đúng 2 biến cố không thể cùng xảy ra.
-- **+ Phân hoạch** — chọn các biến cố đôi một xung khắc và hợp lại là cả không gian mẫu; cần cho xác suất toàn phần và Bayes. (Ví dụ mẫu “Bayes & xác suất toàn phần”.)
+- **+ Xung khắc** — chọn từ 2 biến cố trở lên đôi một không thể cùng xảy ra; chọn k biến cố sẽ khai báo cả k(k−1)/2 cặp.
+- **+ Phân hoạch** (khai báo được nhiều phân hoạch, mỗi lần thêm một phân hoạch mới) — chọn các biến cố đôi một xung khắc và hợp lại là cả không gian mẫu; cần cho xác suất toàn phần và Bayes. (Ví dụ mẫu “Bayes & xác suất toàn phần”.)
 
 Hộp thoại dùng được bằng bàn phím: `Tab` để di chuyển, `Space`/`Enter` để chọn, `Esc` để đóng.
 
@@ -92,3 +93,23 @@ Công việc đang làm dở (biểu thức, giả thiết, khai báo) được 
 - **“Không đọc được biểu thức”:** kiểm tra ngoặc, và các ký hiệu theo bảng ở mục 2. Ký hiệu thừa sau `P(…)` (ví dụ `P(A)=0.6` đưa vào ô biểu thức cần giải) cũng bị báo lỗi — phần `=0.6` thuộc về giả thiết.
 - **Nhận diện ảnh sai chữ:** sửa trực tiếp trong ô chữ của dòng đó; thử cắt ảnh sát hơn hoặc dùng ảnh rõ hơn.
 - **Nút tải PNG không chạy:** cần mạng để tải thư viện html2canvas; hoặc dùng *Tải .tex* và *Sao chép LaTeX*.
+
+## 7. Các tiện ích khác
+
+### Bảng 2×2
+Nút **Bảng 2×2** (cạnh các nút khai báo) mở một bảng xác suất của bốn ô `A∩B`, `A∩B'`, `A'∩B`, `A'∩B'`. Điền bốn ô (tổng phải bằng 1) hoặc chỉ ba ô — ô trống tự suy ra. Bấm **Thêm vào giả thiết** để thêm cả bốn giả thiết một lúc; bảng mâu thuẫn với dữ kiện đang có sẽ bị từ chối kèm lý do.
+
+### Luyện tập
+Nút **Luyện tập** (góc trên) sinh một đề ngẫu nhiên: bù trừ 2–3 biến cố, xác suất có điều kiện, bài suy ngược, độc lập, xung khắc, xác suất toàn phần và Bayes (theo phân hoạch hoặc theo {B, B̄}). Tự tính rồi gõ đáp án (thập phân, `0,667` hay phân số `2/3`) và bấm **Kiểm tra**; **Gợi ý** cho biết nên dùng công thức nào; **Đề khác** sinh đề mới; **Xem lời giải trong công cụ** nạp đề vào công cụ và giải từng bước. Mọi đề đều nhất quán và có đáp án đúng.
+
+### Chia sẻ liên kết
+**Chia sẻ liên kết** sao chép một đường dẫn chứa toàn bộ bài toán (biểu thức, giả thiết, khai báo). Ai mở đường dẫn sẽ thấy đúng bài toán và lời giải hiện ra ngay. Dữ liệu nằm sau dấu `#` của đường dẫn nên **không được gửi tới máy chủ nào**. Lưu ý: nếu bạn đang mở trang trực tiếp từ máy (đường dẫn bắt đầu bằng `file://`) thì người khác chưa mở được — hãy đưa trang lên web (xem hướng dẫn GitHub Pages).
+
+### Xuất lời giải
+- **Sao chép LaTeX**: mã LaTeX thuần, không kèm màu, dán thẳng vào tài liệu của bạn (cần gói `amsmath`).
+- **Tải .tex**: một tài liệu LaTeX đầy đủ (có đề bài, giả thiết, từng bước và kết quả; màu bằng gói `xcolor`), biên dịch được bằng pdfLaTeX — Overleaf chạy ngay, dòng `[T5]{fontenc}` + `lmodern` giúp gõ được tiếng Việt.
+- **Sao chép mã TikZ / Tải TikZ (.tex)** (dưới biểu đồ Venn 1–4 tập): hình vẽ dạng mã vector để chèn vào bài báo cáo, đề thi (cần `\usepackage{tikz}`).
+- **Tải ảnh PNG** chụp toàn bộ phần kết quả.
+
+### Khi ký hiệu không được hiểu
+Công cụ không còn lặng lẽ bỏ qua ký tự lạ. Gõ `A + B`, `A & B`, `A|~B` hay `\subset` sẽ nhận thông báo cụ thể (kèm gợi ý ký hiệu đúng, như dùng `U` thay `+`, dấu `'` thay `~`). Riêng `u` thường luôn là phép hợp, còn `N` chỉ là phép giao khi đứng giữa hai biểu thức (`A N B`); `P(N)` vẫn hiểu `N` là tên một biến cố.
