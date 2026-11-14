@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#17201E">
+<meta name="description" content="Giải xác suất và tập hợp từng bước: nguyên lý bù trừ, xác suất có điều kiện, Bayes, xác suất toàn phần, kèm biểu đồ Venn và mã LaTeX. Chạy hoàn toàn trong trình duyệt.">
+<title>Công cụ giải Xác suất &amp; Tập hợp</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='12' cy='16' r='9' fill='%237EB6D9' fill-opacity='.85'/%3E%3Ccircle cx='20' cy='16' r='9' fill='%23E38C7A' fill-opacity='.85'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<link rel="stylesheet" href="css/style.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script defer src="js/parser.js"></script>
+<script defer src="js/algebra.js"></script>
+<script defer src="js/solver.js"></script>
+<script defer src="js/linear.js"></script>
+<script defer src="js/venn.js"></script>
+<script defer src="js/engine.js"></script>
+<script defer src="js/export.js"></script>
+<script defer src="js/practice.js"></script>
+<script defer src="js/ocr.js"></script>
+<script defer src="js/app.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Bỏ qua tới nội dung chính</a>
+<noscript><p class="noscript">Công cụ này cần bật JavaScript để chạy.</p></noscript>
+
+<div class="app">
+  <header class="app-header">
+    <div class="app-title">
+      <h1>Công cụ giải Xác suất &amp; Tập hợp</h1>
+      <p class="lede">Nhập biểu thức và các giả thiết đã biết — nhận lời giải từng bước, biểu đồ Venn và mã LaTeX.</p>
+    </div>
+    <div class="app-actions">
+      <label class="field-label" for="exampleSelect">Ví dụ mẫu</label>
+      <select id="exampleSelect" name="example"><option value="">Chọn để nạp và giải…</option></select>
+      <div class="app-buttons">
+        <button type="button" class="btn btn-small" id="practiceBtn">Luyện tập</button>
+        <button type="button" class="btn btn-small" id="shareBtn">Chia sẻ liên kết</button>
+      </div>
+    </div>
+  </header>
+
+  <details class="quickstart" id="quickstart">
+    <summary>Cách dùng nhanh</summary>
+    <ol>
+      <li><strong>Biểu thức.</strong> Gõ, ví dụ <code>P(A U (B n C))</code>, dán mã LaTeX, hoặc tải/dán một ảnh chụp.</li>
+      <li><strong>Giả thiết.</strong> Thêm các giá trị đề bài cho, ví dụ <code>A n B</code> = <code>0.1</code> hoặc phân số <code>3/8</code> (giá trị từ 0 đến 1). Đề bài nói “độc lập”, “xung khắc” hay “phân hoạch” thì dùng nút tương ứng.</li>
+      <li><strong>Giải.</strong> Bấm <em>Giải</em> (hoặc <kbd>Ctrl</kbd>+<kbd>Enter</kbd>) để xem từng bước.</li>
+    </ol>
+    <p class="hint">Ảnh được xử lý ngay trên máy bạn, không tải lên đâu cả. Dữ liệu đang làm dở được lưu cục bộ trong trình duyệt.</p>
+  </details>
+
+  <main id="main" class="workspace">
+    <section class="panel panel-input" aria-labelledby="h-expr">
+      <h2 class="step-title" id="h-expr">Biểu thức cần giải</h2>
+
+      <div class="tabs" role="tablist" aria-label="Cách nhập biểu thức">
+        <button type="button" role="tab" class="tab" id="tab-text" data-mode="text" aria-selected="true" aria-controls="pane-text">Ký hiệu thường</button>
+        <button type="button" role="tab" class="tab" id="tab-latex" data-mode="latex" aria-selected="false" aria-controls="pane-latex" tabindex="-1">LaTeX</button>
+        <button type="button" role="tab" class="tab" id="tab-image" data-mode="image" aria-selected="false" aria-controls="pane-image" tabindex="-1">Ảnh</button>
+      </div>
+
+      <div class="pane" id="pane-text" role="tabpanel" aria-labelledby="tab-text">
+        <label class="sr-only" for="exprInput">Biểu thức cần giải, ký hiệu thường</label>
+        <textarea id="exprInput" name="expr" rows="2" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="Ví dụ: P(A U (B n C))"></textarea>
+        <p class="hint"><code>U</code> (hoặc <code>u</code>) hợp · <code>n</code> (hoặc <code>N</code> giữa hai biểu thức) giao · <code>'</code> phần bù · <code>|</code> điều kiện. Viết liền chữ cũng là giao: <code>AB</code> = <code>A n B</code>.</p>
+      </div>
+
+      <div class="pane" id="pane-latex" role="tabpanel" aria-labelledby="tab-latex" hidden>
+        <label class="sr-only" for="latexInput">Biểu thức cần giải, mã LaTeX</label>
+        <textarea id="latexInput" name="latex" rows="2" class="mono" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="Ví dụ: P(A \cup (B \cap C))">P(A \cup (B \cap C))</textarea>
+        <p class="hint">Dùng giống tab “Ký hiệu thường”, chỉ khác cú pháp. Hỗ trợ <code>\cup</code> <code>\cap</code> <code>\overline{…}</code> <code>\setminus</code> <code>\mid</code> <code>\emptyset</code> <code>\Omega</code>.</p>
+      </div>
+
+      <div class="pane" id="pane-image" role="tabpanel" aria-labelledby="tab-image" hidden>
+        <div class="drop" id="imageDrop" role="button" tabindex="0" aria-describedby="dropHint">
+          <span><strong>Chọn ảnh</strong>, kéo-thả vào đây, hoặc dán bằng <kbd>Ctrl</kbd>+<kbd>V</kbd></span>
+        </div>
+        <input type="file" id="imageFile" name="image" accept="image/*" hidden>
+        <p class="hint" id="dropHint">Ảnh có thể gồm nhiều dòng (vd. vài dòng <code>P(A) = 0.6</code>). Đọc được chữ in/gõ máy rõ nét, cả chữ nghiêng kiểu công thức lẫn nền tối, và gạch đầu chữ (phần bù). Cắt sát vào phần chữ sẽ chính xác hơn.</p>
+        <figure class="preview" id="imgPreviewWrap" hidden><img id="imgPreview" alt="Ảnh đã chọn"></figure>
+        <p class="status" id="imgStatus" role="status" aria-live="polite"></p>
+        <div id="imgReviewArea"></div>
+      </div>
+
+      <h2 class="step-title" id="h-hyp">Giả thiết đã biết <span class="count" id="hypCount"></span></h2>
+      <div class="hyp-list" id="hypothesesList" role="list" aria-labelledby="h-hyp"></div>
+
+      <form class="add-hyp" id="addHypForm" novalidate>
+        <div class="field">
+          <label for="hypExpr">Biểu thức</label>
+          <input type="text" id="hypExpr" name="hypExpr" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="vd A n B, A|B hoặc P(A n B)">
+        </div>
+        <div class="field">
+          <label for="hypValue">Giá trị (từ 0 đến 1)</label>
+          <div class="inline">
+            <input type="text" id="hypValue" name="hypValue" inputmode="decimal" spellcheck="false" autocomplete="off" placeholder="0.1 hoặc 3/8">
+            <button type="submit" class="btn" id="addHypBtn">Thêm</button>
+          </div>
+        </div>
+        <p class="field-error" id="hypError" role="alert" hidden></p>
+      </form>
+
+      <div class="decl-row" role="group" aria-label="Khai báo quan hệ giữa các biến cố">
+        <button type="button" class="btn btn-small" id="addIndepBtn">+ Độc lập</button>
+        <button type="button" class="btn btn-small" id="addMutexBtn">+ Xung khắc</button>
+        <button type="button" class="btn btn-small" id="setPartitionBtn">+ Phân hoạch</button>
+        <button type="button" class="btn btn-small" id="tableBtn">Bảng 2×2</button>
+        <button type="button" class="btn btn-small btn-quiet" id="clearHypBtn">Xóa hết</button>
+      </div>
+
+      <div class="solve-bar">
+        <button type="button" class="btn-primary" id="solveBtn">Giải</button>
+        <p class="hint hint-center">hoặc nhấn <kbd>Ctrl</kbd>+<kbd>Enter</kbd></p>
+      </div>
+    </section>
+
+    <section class="panel panel-results" id="resultsPanel" aria-labelledby="h-res" tabindex="-1">
+      <h2 class="sr-only" id="h-res">Kết quả</h2>
+      <div class="results" id="resultsBody">
+        <div class="empty" id="emptyState">
+          <p class="empty-title">Chưa có lời giải</p>
+          <p>Nhập biểu thức và giả thiết ở bên trái rồi bấm <strong>Giải</strong>, hoặc nạp một <em>Ví dụ mẫu</em> ở góc trên để xem công cụ chạy thế nào.</p>
+        </div>
+      </div>
+      <p class="sr-only" id="liveStatus" role="status" aria-live="polite"></p>
+    </section>
+  </main>
+
+  <footer class="app-footer">Chạy hoàn toàn trên trình duyệt của bạn — không có máy chủ, không gửi dữ liệu đi đâu.</footer>
+</div>
+
+<div class="modal-backdrop" id="modalBackdrop" hidden>
+  <div class="modal" id="modalContent" role="dialog" aria-modal="true" aria-labelledby="modalTitle"></div>
+</div>
+<div class="toast-region" id="toastRegion" role="status" aria-live="polite"></div>
+</body>
+</html>
