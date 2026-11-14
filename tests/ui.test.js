@@ -6,12 +6,16 @@ let JSDOM, VirtualConsole, createCanvas;
 try { ({ JSDOM, VirtualConsole } = require('jsdom')); ({ createCanvas } = require('canvas')); } catch (e) { JSDOM = null; }
 const skip = JSDOM ? false : 'packages "jsdom" and "canvas" not installed (run npm install)';
 
+const { loadModules } = require('./helpers/load');
+const M = loadModules();          // the same modules, to compute expected values independently of the page
 const ROOT = path.join(__dirname, '..');
 const wait = ms => new Promise(r => setTimeout(r, ms));
+// values created inside the jsdom window come from another realm; compare them as plain data
+const plain = v => JSON.parse(JSON.stringify(v));
 
 // Loads the real index.html (scripts from disk); only the two CDN libraries
 // are replaced by tiny stand-ins so the tests need no network.
-async function boot() {
+async function boot(hash) {
   const target = process.env.UI_TARGET || 'index.html';   // UI_TARGET=dist/cong-cu-xac-suat-tap-hop.html tests the built file
   let html = fs.readFileSync(path.join(ROOT, target), 'utf-8');
   html = html
@@ -21,7 +25,7 @@ async function boot() {
   const vc = new VirtualConsole();
   const errors = [];
   vc.on('jsdomError', e => errors.push(e.message));
-  const dom = new JSDOM(html, { runScripts: 'dangerously', resources: 'usable', url: pathToUrl(path.join(ROOT, 'index.html')), virtualConsole: vc, pretendToBeVisual: true });
+  const dom = new JSDOM(html, { runScripts: 'dangerously', resources: 'usable', url: pathToUrl(path.join(ROOT, 'index.html')) + (hash || ''), virtualConsole: vc, pretendToBeVisual: true });
   const { window } = dom;
   for (let i = 0; i < 60 && !(window.runSolve && window.document.querySelector('#hypothesesList .hyp-row')); i++) await wait(50);
   const doc = window.document;
@@ -46,7 +50,8 @@ test('solving the default 3-set example gives 0.8 with steps, a Venn diagram and
   const { $, doc, window } = await boot();
   $('solveBtn').click();
   assert.match(answerSrc($), /= 0\.8 = \\dfrac\{4\}\{5\}/);
-  assert.ok(doc.querySelectorAll('.steps .step').length >= 2);
+  assert.equal(doc.querySelectorAll('.steps .step').length, 1, '3-set inclusion-exclusion is one compact step');
+  assert.match(doc.querySelector('.steps .step-eq').getAttribute('data-katex-src'), /aligned/);
   assert.ok($('vennSvgContainer').querySelector('svg'));
   assert.match($('liveStatus').textContent, /Đã giải xong/);
   assert.ok(doc.querySelector('.venn-data table'), 'region table is available alongside the diagram');
@@ -124,7 +129,7 @@ test('removals can be undone from the toast; clearing everything too', { skip },
   assert.equal(rows(), 7);
 });
 
-test('dialog: buttons with aria-pressed, max selection, Escape closes and focus returns', { skip }, async () => {
+test('dialog: buttons with aria-pressed, Escape closes and focus returns', { skip }, async () => {
   const { $, doc, window } = await boot();
   const KeyboardEvent = window.KeyboardEvent;
   $('addMutexBtn').focus();
@@ -137,7 +142,7 @@ test('dialog: buttons with aria-pressed, max selection, Escape closes and focus 
   assert.equal(confirm.disabled, true);
   chips[0].click(); chips[1].click();
   assert.equal(chips[0].getAttribute('aria-pressed'), 'true');
-  assert.equal(chips[2].disabled, true, 'mutex allows at most 2');
+  assert.equal(chips[2].disabled, false, 'mutual exclusivity now takes any number of sets (k >= 2)');
   assert.equal(confirm.disabled, false);
   $('modalBackdrop').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   assert.equal($('modalBackdrop').hidden, true);
@@ -202,15 +207,15 @@ test('state survives a save/restore round trip (facts, declarations, inputs)', {
   window.eval(`
     state.independentGroups.push({ names: ['A', 'B'] });
     state.mutexPairs.push(['B', 'C']);
-    state.partition = ['A', 'C'];
+    state.partitions.push(['A', 'C'], ['B', 'D']);
     document.getElementById('exprInput').value = 'P(A n B)';
   `);
   const snap = JSON.parse(JSON.stringify(window.eval('serializeState()')));
-  window.eval('state.hypotheses = []; state.independentGroups = []; state.mutexPairs = []; state.partition = null;');
+  window.eval('state.hypotheses = []; state.independentGroups = []; state.mutexPairs = []; state.partitions = [];');
   window.applySnapshot(snap);
   assert.equal(window.eval('state.hypotheses.length'), 7);
   assert.deepEqual(window.eval('state.independentGroups.map(g => g.names)'), [['A', 'B']]);
-  assert.deepEqual(window.eval('state.partition'), ['A', 'C']);
+  assert.deepEqual(plain(window.eval('state.partitions')), [['A', 'C'], ['B', 'D']]);
   assert.equal(window.eval("document.getElementById('exprInput').value"), 'P(A n B)');
 });
 
@@ -274,4 +279,165 @@ test('a file that is not an image is rejected politely', { skip }, async () => {
   const env = await boot();
   env.window.handleImageFile(new env.window.File(['hello'], 'x.txt', { type: 'text/plain' }));
   assert.match(env.$('imgStatus').textContent, /không phải ảnh/);
+});
+
+test('every CSS variable the scripts or stylesheet use is defined in :root (an undefined one silently drops the property, e.g. the Venn frame)', { skip }, () => {
+  const css = fs.readFileSync(path.join(ROOT, 'css', 'style.css'), 'utf-8');
+  const defined = new Set([...css.match(/:root\s*\{[\s\S]*?\n\}/)[0].matchAll(/(--[a-z0-9-]+)\s*:/g)].map(m => m[1]));
+  const sources = { 'css/style.css': css };
+  for (const f of fs.readdirSync(path.join(ROOT, 'js'))) sources['js/' + f] = fs.readFileSync(path.join(ROOT, 'js', f), 'utf-8');
+  for (const [name, text] of Object.entries(sources)) {
+    // (a variable used with a fallback, e.g. var(--chip-color, red), is set per element on purpose)
+    for (const m of text.matchAll(/var\((--[a-z0-9-]+)\)/g)) assert.ok(defined.has(m[1]), `${name} uses undefined ${m[1]}`);
+  }
+});
+
+test('k-way exclusivity: choosing 3 sets declares all 3 pairs at once; a second partition is added, not replaced; old single-partition saves still load', { skip }, async () => {
+  const { $, doc, window } = await boot();
+  $('clearHypBtn').click();
+  clickAdd($, 'A', '0.2'); clickAdd($, 'B', '0.3'); clickAdd($, 'C', '0.1');
+  $('addMutexBtn').click();
+  [...doc.querySelectorAll('#modalContent .chip-option')].filter(c => ['A', 'B', 'C'].includes(c.dataset.name)).forEach(c => c.click());
+  [...doc.querySelectorAll('#modalContent button')].find(b => /Xác nhận/.test(b.textContent)).click();
+  assert.equal(window.eval('state.mutexPairs.length'), 3);
+  $('exprInput').value = 'P(A U B U C)'; $('solveBtn').click();
+  assert.match(answerSrc($), /= 0\.6 = /, 'pairwise exclusive: P(A∪B∪C) = 0.2 + 0.3 + 0.1');
+
+  $('clearHypBtn').click();
+  for (const names of [['B1', 'B2'], ['C1', 'C2']]) {
+    window.eval(`declare('partition', ${JSON.stringify(names)})`);
+  }
+  assert.deepEqual(plain(window.eval('state.partitions')), [['B1', 'B2'], ['C1', 'C2']]);
+  // a save written before several partitions existed
+  window.applySnapshot({ v: 2, mode: 'text', expr: 'P(A)', latex: '', hyps: [], indep: [], mutex: [], partition: ['X', 'Y'] });
+  assert.deepEqual(plain(window.eval('state.partitions')), [['X', 'Y']]);
+});
+
+// ---- 2x2 table, practice, share link ------------------------------------------
+const confirmBtnOf = doc => [...doc.querySelectorAll('#modalContent .btn-primary')][0];
+function fillTable(doc, window, a, b, cells) {
+  const names = doc.querySelectorAll('#modalContent .tbl-name');
+  names[0].value = a; names[1].value = b;
+  doc.querySelectorAll('#modalContent .tbl-cell').forEach((el, i) => { el.value = cells[i]; el.dispatchEvent(new window.Event('input', { bubbles: true })); });
+}
+test('2x2 table: four cells (or three) become four hypotheses; wrong sums and contradictions are explained', { skip }, async () => {
+  const { $, doc, window } = await boot();
+  $('clearHypBtn').click();
+  $('tableBtn').click();
+  assert.equal(confirmBtnOf(doc).disabled, true, 'needs at least three cells');
+  fillTable(doc, window, 'A', 'B', ['0.2', '0.3', '1/10', '0.4']);
+  confirmBtnOf(doc).click();
+  assert.equal($('modalBackdrop').hidden, true);
+  assert.equal(doc.querySelectorAll('#hypothesesList .hyp-row').length, 4);
+  $('exprInput').value = 'P(B|A)'; $('solveBtn').click();
+  assert.match(answerSrc($), /= 0\.4 = /, 'P(B|A) = 0.2 / (0.2 + 0.3)');
+
+  $('clearHypBtn').click();
+  $('tableBtn').click();
+  fillTable(doc, window, 'A', 'B', ['0.2', '0.3', '0.1', '0.5']);
+  confirmBtnOf(doc).click();
+  assert.equal($('modalBackdrop').hidden, false, 'sum 1.1 is refused and the dialog stays open');
+  assert.match(doc.querySelector('#modalContent .field-error').textContent, /tổng bằng 1/);
+  fillTable(doc, window, 'A', 'B', ['0.2', '0.3', '0.1', '']);        // last cell implied: 0.4
+  confirmBtnOf(doc).click();
+  assert.equal($('modalBackdrop').hidden, true);
+  assert.equal(doc.querySelectorAll('#hypothesesList .hyp-row').length, 4);
+  assert.equal(window.eval("state.hypotheses.find(x => x.key === canonicalKey(flatten(parseQuery(\"A' n B'\").arg))).value").toFixed(6), '0.400000');
+
+  // a table that contradicts what is already known is refused
+  $('clearHypBtn').click();
+  clickAdd($, 'A', '0.1');
+  $('tableBtn').click();
+  fillTable(doc, window, 'A', 'B', ['0.2', '0.3', '0.1', '0.4']);     // P(A) would be 0.5, not 0.1
+  confirmBtnOf(doc).click();
+  assert.equal($('modalBackdrop').hidden, false);
+  assert.match(doc.querySelector('#modalContent .field-error').textContent, /mâu thuẫn/);
+});
+
+test('practice dialog: a right answer (fraction or decimal) is confirmed, a wrong one is not; "load into tool" solves the exercise', { skip }, async () => {
+  const { $, doc, window } = await boot();
+  window.Date.now = () => 123456;                       // fixes the seed, so the test knows the exercise
+  const want = M.makeExercise(123456);
+  $('practiceBtn').click();
+  assert.equal($('modalBackdrop').hidden, false);
+  const answer = doc.querySelector('#modalContent .practice-answer');
+  const type = text => { answer.value = text; answer.dispatchEvent(new window.Event('input', { bubbles: true })); };
+  const feedback = () => doc.querySelector('#modalContent .field-error');
+  assert.equal(confirmBtnOf(doc).disabled, true, 'nothing typed yet');
+  assert.ok(doc.querySelectorAll('#modalContent .practice-facts li').length >= 1);
+
+  type(String(want.answer + 0.2));
+  confirmBtnOf(doc).click();
+  assert.equal(feedback().hidden, false);
+  assert.ok(!feedback().classList.contains('field-ok'), 'a wrong answer is not praised');
+  assert.equal($('modalBackdrop').hidden, false, 'dialog stays open for another try');
+
+  type(want.answer.toFixed(4));
+  confirmBtnOf(doc).click();
+  assert.ok(feedback().classList.contains('field-ok'));
+  assert.match(feedback().textContent, /Chính xác/);
+
+  // "another exercise" changes the problem and clears the answer
+  const before = doc.querySelector('#modalContent .practice-question').textContent + doc.querySelector('#modalContent .practice-facts').textContent;
+  [...doc.querySelectorAll('#modalContent .btn')].find(b => /Đề khác/.test(b.textContent)).click();
+  const after = doc.querySelector('#modalContent .practice-question').textContent + doc.querySelector('#modalContent .practice-facts').textContent;
+  assert.notEqual(before, after);
+  assert.equal(answer.value, '');
+
+  // load the exercise into the tool: facts appear and it is solved to the known answer
+  const next = M.makeExercise(123456 + 7919);
+  [...doc.querySelectorAll('#modalContent .btn')].find(b => /Xem lời giải/.test(b.textContent)).click();
+  assert.equal($('modalBackdrop').hidden, true);
+  assert.equal(window.eval('state.hypotheses.length'), next.facts.length);
+  const m = answerSrc($).match(/= (-?[\d.]+)/);
+  assert.ok(m && Math.abs(parseFloat(m[1]) - next.answer) < 1e-5, answerSrc($) + ' vs ' + next.answer);
+});
+
+test('share link: the link carries the whole problem, and opening it restores and solves it', { skip }, async () => {
+  const first = await boot();
+  first.$('clearHypBtn').click();
+  clickAdd(first.$, 'A', '1/4'); clickAdd(first.$, 'B', '0.5'); clickAdd(first.$, 'A n B', '0.1');
+  first.$('exprInput').value = 'P(A U B)';
+  const url = first.window.eval('shareUrl()');
+  assert.match(url, /#s=[A-Za-z0-9_-]+$/);
+
+  const second = await boot(url.slice(url.indexOf('#')));
+  assert.equal(second.doc.querySelectorAll('#hypothesesList .hyp-row').length, 3);
+  assert.equal(second.$('exprInput').value, 'P(A U B)');
+  assert.match(answerSrc(second.$), /= 0\.65/, 'solved on arrival: 0.25 + 0.5 - 0.1');
+  assert.match(second.doc.querySelector('#toastRegion').textContent, /Đã nạp bài toán từ liên kết/);
+
+  // a damaged link falls back to the normal start-up instead of breaking the page
+  const bad = await boot('#s=@@@not-valid@@@');
+  assert.ok(bad.doc.querySelectorAll('#hypothesesList .hyp-row').length >= 1);
+});
+
+test('end to end with the reported screenshot: image with stacked fractions -> hypotheses -> P(A) as a worked total-probability solution', { skip, timeout: 60000 }, async () => {
+  const env = await boot();
+  const { $, doc, window } = env;
+  $('clearHypBtn').click();
+  const buf = fs.readFileSync(path.join(ROOT, 'tests', 'fixtures', 'fractions-3-lines.png'));
+  window.handleImageFile(new window.File([buf], 'fractions.png', { type: 'image/png' }));
+  for (let i = 0; i < 120 && !doc.querySelector('#imgReviewArea .review-row'); i++) await wait(100);
+  const rows = [...doc.querySelectorAll('#imgReviewArea .review-row')];
+  assert.deepEqual(rows.map(r => r.querySelector('.line-text').value), ['P(A|B)=0.6', "P(A|B')=2/3", 'P(B)=3/4']);
+  [...doc.querySelectorAll('#imgReviewArea button')].find(b => /Thêm tất cả 3/.test(b.textContent)).click();
+  assert.equal(doc.querySelectorAll('#hypothesesList .hyp-row').length, 3);
+  $('exprInput').value = 'P(A)'; $('solveBtn').click();
+  assert.match(answerSrc($), /= 0\.616667 = \\dfrac\{37\}\{60\}/);
+  const rules = [...doc.querySelectorAll('#resultsBody .step-rule')].map(e => e.textContent);
+  assert.deepEqual(rules, ['Quy tắc phần bù', 'Công thức xác suất toàn phần (phân hoạch {E, Ē})']);
+  assert.equal(doc.querySelector('#resultsBody .banner'), null);
+});
+
+test('2x2 dialog: row/column headings follow the names typed, and the name fields are compact', { skip }, async () => {
+  const { $, doc, window } = await boot();
+  $('tableBtn').click();
+  const names = doc.querySelectorAll('#modalContent .tbl-name');
+  const heads = () => [...doc.querySelectorAll('#modalContent .tbl22 th')].map(e => e.textContent);
+  assert.deepEqual(heads(), ['trong B', 'không trong B', 'trong A', 'không trong A']);
+  names[0].value = 'X'; names[0].dispatchEvent(new window.Event('input', { bubbles: true }));
+  names[1].value = 'Y'; names[1].dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.deepEqual(heads(), ['trong Y', 'không trong Y', 'trong X', 'không trong X']);
+  assert.equal(names.length, 2);
 });

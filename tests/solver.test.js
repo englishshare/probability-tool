@@ -142,3 +142,100 @@ test('independence among up to 8 sets is fully usable for reverse inference too'
   near(model.valueOf(q('A n B n C n D n E n F')).value, 1 / 64);
   near(model.valueOf(q("A n B' n C")).value, 1 / 8);
 });
+
+// ---- scenarios reported with screenshots --------------------------------
+test('total probability over {B, B̄}: P(A) from P(A|B), P(A|B̄), P(B) is shown as a worked solution', () => {
+  const ctx = ctxOf([['A|B', 0.6], ['A|~B', 2 / 3], [k('B'), 0.75]]);
+  const out = solveQuery(q('P(A)'), ctx, null);
+  near(out.numeric, 0.6 * 0.75 + (2 / 3) * 0.25);
+  assert.equal(out.via, 'rule', 'a textbook derivation, not the linear fallback');
+  assert.deepEqual(out.steps.map(s => s.rule), ['Quy tắc phần bù', 'Công thức xác suất toàn phần (phân hoạch {E, Ē})']);
+  assert.match(out.steps[1].eq, /0\.6 \\cdot 0\.75 \+ 0\.666667 \\cdot 0\.25 \\\\ &= 0\.45 \+ 0\.166667 = 0\.616667/);
+});
+
+test('declared partition with a conditional given only as a complement: no crash, full derivation', () => {
+  // P(A|B1)=0.6, P(A|B2)=2/3, P(Ā|B3)=1/6, P(B1)=0.75, P(B2)=0.1, partition {B1,B2,B3}
+  const ctx = ctxOf([['A|B1', 0.6], ['A|B2', 2 / 3], ['~A|B3', 1 / 6], [k('B1'), 0.75], [k('B2'), 0.1]], { partition: ['B1', 'B2', 'B3'] });
+  const total = 0.6 * 0.75 + (2 / 3) * 0.1 + (5 / 6) * 0.15;
+  const pa = solveQuery(q('P(A)'), ctx, null);
+  near(pa.numeric, total);
+  assert.equal(pa.via, 'rule');
+  const rules = pa.steps.map(s => s.rule);
+  assert.ok(rules.includes('Phân hoạch phủ kín không gian mẫu'), 'P(B3) = 1 - P(B1) - P(B2)');
+  assert.ok(rules.includes('Phần bù của xác suất có điều kiện'), 'P(A|B3) = 1 - P(Ā|B3)');
+  assert.ok(rules.includes('Công thức xác suất toàn phần'));
+  const bayes = solveQuery(q('P(B1|A)'), ctx, null);
+  near(bayes.numeric, 0.6 * 0.75 / total);
+  assert.ok(bayes.steps.some(s => s.rule === 'Định lý Bayes'));
+});
+
+test('Bayes over {B, B̄} when no partition is declared', () => {
+  const ctx = ctxOf([['A|B', 0.6], ['A|~B', 2 / 3], [k('B'), 0.75]]);
+  const out = solveQuery(q('P(B|A)'), ctx, null);
+  near(out.numeric, 0.45 / (0.45 + (2 / 3) * 0.25));
+  assert.ok(out.steps.some(s => /Bayes/.test(s.rule)));
+});
+
+test('a cycle in the rules can never overflow the stack (and a throwing rule solver still falls back)', () => {
+  // facts that make several rules call each other
+  const ctx = ctxOf([['A|B', 0.5], ['B|A', 0.5]], { partition: ['A', 'B', 'C'] });
+  for (const query of ['P(A)', 'P(B)', 'P(C)', 'P(A|C)', 'P(A n B)']) {
+    assert.doesNotThrow(() => solveQuery(q(query), ctx, null), query);
+  }
+});
+
+test('inclusion-exclusion for 3-4 sets is ONE aligned formula when every term is known', () => {
+  const ctx = ctxOf([[k('A'), .3], [k('B'), .4], [k('C'), .5], [k('A n B'), .1], [k('A n C'), .15], [k('B n C'), .2], [k('A n B n C'), .05]]);
+  const out = solveQuery(q('P(A U B U C)'), ctx, null);
+  assert.equal(out.steps.length, 1);
+  assert.match(out.steps[0].eq, /^\\begin\{aligned\}/);
+  assert.match(out.steps[0].eq, /= 0\.3 \+ 0\.4 \+ 0\.5 - 0\.1 - 0\.15 - 0\.2 \+ 0\.05/);
+});
+
+test('independent A, B: P(A) and P(A∪B) known -> P(B) (by rule, with the textbook formula)', () => {
+  const ctx = ctxOf([[k('A'), 0.4], [k('A U B'), 0.7]], { independentGroups: [new Set([k('A'), k('B')])] });
+  const out = solveQuery(q('P(B)'), ctx, null);
+  near(out.numeric, 0.5);
+  assert.equal(out.via, 'rule');
+  assert.equal(out.steps[0].rule, 'Độc lập (suy ngược)');
+  assert.match(out.steps[0].eq, /= 0\.5\\end\{aligned\}$/);
+  near(solveQuery(q('P(A n B)'), ctx, null).numeric, 0.2);
+});
+
+test('independent A, B: P(A) and P(A∩B) known -> P(B)', () => {
+  const ctx = ctxOf([[k('A'), 0.4], [k('A n B'), 0.12]], { independentGroups: [new Set([k('A'), k('B')])] });
+  near(solveQuery(q('P(B)'), ctx, null).numeric, 0.3);
+});
+
+test('linear model: independence with one unknown factor is a linear equation (works even when rules cannot chain it)', () => {
+  // three independent events; only P(A) and P(A∪B∪C) given -> P(B∪C) via the linear model
+  const ctx = ctxOf([[k('A'), 0.5], [k('A U B U C'), 0.9]], { independentGroups: [new Set([k('A'), k('B'), k('C')])] });
+  const model = buildLinearModel(ctx, ['A', 'B', 'C']);
+  // P(A∪(B∪C)) = 0.5 + P(B∪C) - 0.5*P(B∪C) = 0.9  =>  P(B∪C) = 0.8
+  const bc = model.valueOf(q('B U C'));
+  assert.ok(bc && Math.abs(bc.value - 0.8) < 1e-9);
+});
+
+test('feasibility LP catches contradictions that row reduction cannot see (a third set splits every region)', () => {
+  const cases = [
+    [['A', 0.1], ['B', 0.3], ['A n B', 0.3], ['A n C', 0.6]],            // P(A∩B) > P(A), hidden by C
+    [['C', 0.5], ['B n C', 0.5], ['A U B', 0.3], ['B U C', 0.2]],        // P(B∪C) < P(C)
+  ];
+  for (const facts of cases) {
+    const ctx = ctxOf(facts.map(([e, v]) => [k(e), v]));
+    const model = buildLinearModel(ctx, ['A', 'B', 'C']);
+    assert.equal(model.problem && model.problem.kind, 'infeasible', JSON.stringify(facts));
+    assert.match(findContextProblem(ctx), /không thể cùng đúng/);
+  }
+  // the same shapes with consistent numbers are fine
+  const ok = ctxOf([['A', 0.4], ['B', 0.3], ['A n B', 0.1], ['A n C', 0.2]].map(([e, v]) => [k(e), v]));
+  assert.equal(findContextProblem(ok), null);
+});
+
+test('feasibility LP never reports a conflict it has not proven (consistent independent sets of every size)', () => {
+  for (const n of [3, 5, 7, 9, 10]) {
+    const names = 'ABCDEFGHIJ'.slice(0, n).split('');
+    const ctx = ctxOf(names.map(x => [x, 0.5]), { independentGroups: [new Set(names)] });
+    assert.equal(findContextProblem(ctx), null, `n = ${n}`);
+  }
+});

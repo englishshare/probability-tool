@@ -32,12 +32,8 @@ function renderWithOverline(text, barredIndices, font, barPad) {
   }
   ctx.lineWidth = 2;
   for (const idx of barredIndices) {
-    const b = boxes[idx];
-    const pad = barPad == null ? b.w * 0.08 : barPad;
-    ctx.beginPath();
-    ctx.moveTo(b.x + pad, 30);
-    ctx.lineTo(b.x + b.w - pad, 30);
-    ctx.stroke();
+    const b = boxes[idx]; const pad = barPad == null ? b.w * 0.08 : barPad;
+    ctx.beginPath(); ctx.moveTo(b.x + pad, 30); ctx.lineTo(b.x + b.w - pad, 30); ctx.stroke();
   }
   return c;
 }
@@ -79,10 +75,7 @@ test('what follows the last "=" is decoded as a number even at tiny sizes', { sk
 test('detailed API returns ordered, non-overlapping pixel bands', { skip }, () => {
   const d = recognizeLinesDetailed(renderLines(HYP, '36px serif', 60), templates, createCanvas);
   assert.equal(d.length, 3);
-  d.forEach((l, i) => {
-    assert.ok(l.bottom > l.top);
-    if (i) assert.ok(l.top > d[i - 1].bottom);
-  });
+  d.forEach((l, i) => { assert.ok(l.bottom > l.top); if (i) assert.ok(l.top > d[i - 1].bottom); });
 });
 
 test('recognized overline text is valid input for the parser', { skip }, () => {
@@ -117,13 +110,7 @@ test('the reported equation: four unions of ABCD, a bar over D, A, B, C respecti
 // italic). The page upscales small crops before recognizing them; so does this.
 const fs = require('fs');
 const path = require('path');
-const { loadImage } = (() => {
-  try {
-    return require('canvas');
-  } catch (e) {
-    return {};
-  }
-})();
+const { loadImage } = (() => { try { return require('canvas'); } catch (e) { return {}; } })();
 async function recognizeFixture(name) {
   const img = await loadImage(path.join(__dirname, 'fixtures', name));
   const scale = img.width > 1000 ? 1000 / img.width : (img.width < 400 ? Math.min(2, 640 / img.width) : 1);
@@ -141,4 +128,33 @@ test('real screenshot, Times New Roman: hairline strokes of 2 and 3 stay in one 
 });
 test('real screenshot, math italic with overlines: bars on D, A, B, C and B is not read as 8', { skip }, async () => {
   assert.deepEqual(await recognizeFixture('cambria-italic-overlines.png'), ["P(ABCD'UA'BCDUAB'CDUABC'D)"]);
+});
+
+// ---- stacked fractions ----------------------------------------------------
+const { typeset } = require('./helpers/typeset');
+const FRACTION_LINES = [
+  [[{ t: 'text', s: 'P(A|B' }, { t: 'sub', s: '1' }, { t: 'text', s: ') = 0.6' }], 'P(A|B1)=0.6'],
+  [[{ t: 'text', s: 'P(A|B' }, { t: 'sub', s: '2' }, { t: 'text', s: ') = ' }, { t: 'frac', n: '2', d: '3' }], 'P(A|B2)=2/3'],
+  [[{ t: 'text', s: 'P(' }, { t: 'over', s: 'A' }, { t: 'text', s: '|B' }, { t: 'sub', s: '3' }, { t: 'text', s: ') = ' }, { t: 'frac', n: '1', d: '6' }], "P(A'|B3)=1/6"],
+  [[{ t: 'text', s: 'P(B' }, { t: 'sub', s: '1' }, { t: 'text', s: ') = ' }, { t: 'frac', n: '3', d: '4' }], 'P(B1)=3/4'],
+  [[{ t: 'text', s: 'P(B' }, { t: 'sub', s: '2' }, { t: 'text', s: ') = ' }, { t: 'frac', n: '1', d: '10' }], 'P(B2)=1/10'],
+];
+test('stacked fractions with subscripts and a barred letter, italic and upright, three sizes', { skip }, () => {
+  for (const style of ['italic ', '']) for (const size of [26, 34, 42]) {
+    const lh = Math.round(size * 2.3);
+    const c = createCanvas(420, FRACTION_LINES.length * lh + 30);
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); ctx.fillStyle = '#000';
+    FRACTION_LINES.forEach(([toks], i) => typeset(ctx, toks, 14, Math.round(size * 1.5) + i * lh, size, style));
+    assert.deepEqual(rec(c), FRACTION_LINES.map(l => l[1]), `${style}${size}px`);
+  }
+});
+test('real screenshot with stacked fractions and a bar over B: 2/3 and 3/4 are read as fractions', { skip }, async () => {
+  assert.deepEqual(await recognizeFixture('fractions-3-lines.png'), ['P(A|B)=0.6', "P(A|B')=2/3", 'P(B)=3/4']);
+});
+test('a recognized fraction line is a usable hypothesis', { skip }, () => {
+  const { tryLineAsHypothesis } = M;
+  const h = tryLineAsHypothesis("P(A|B')=2/3");
+  assert.equal(h.exprPart, "P(A|B')");
+  assert.ok(Math.abs(h.value - 2 / 3) < 1e-12);
 });

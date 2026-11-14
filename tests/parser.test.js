@@ -115,3 +115,29 @@ test('parseValueInput: decimals (point or Vietnamese comma), fractions, and reje
   assert.equal(tryLineAsHypothesis('P(A)=0.D'), null);
   assert.equal(tryLineAsHypothesis('P(A'), null);
 });
+
+test('lowercase u is a union; a lone capital N between operands is an intersection; otherwise N is a name', () => {
+  assert.equal(key('A u B'), key('A U B'));
+  assert.equal(key('P(A u B)'), '(A∪B)');
+  assert.equal(key('AuB'), key('A U B'));
+  assert.equal(key('A N B'), key('A n B'));
+  assert.equal(key('P((A U B) N C)'), key('(A U B) n C'));
+  assert.equal(key('P(N)'), 'N');
+  assert.equal(key('P(A N)'), key('A n N'));
+  assert.equal(key("A' N B'"), key("A' n B'"));
+});
+
+test('symbols the tool does not understand are reported, never silently dropped', () => {
+  const { parseExpression } = M;
+  assert.throws(() => parseExpression('A|~B'), /ký tự "~".*phần bù/);
+  assert.throws(() => parseExpression('A + B'), /ký tự "\+".*phép hợp/);
+  assert.throws(() => parseExpression('A & B'), /ký tự "&".*phép giao/);
+  assert.throws(() => parseExpression('A \\subset B'), /\\subset chưa được hỗ trợ/);
+  assert.throws(() => parseExpression('A^2'), /dấu \^/);
+  // spellings that are fine
+  assert.equal(key('$P(A \\cup B)$'), key('A U B'));
+  assert.equal(key('A ∖ B'), key("A n B'"));
+  assert.equal(key("P(A\u2032)"), key("A'"));
+  assert.equal(key('P(\\left( A \\cup B \\right))'), key('A U B'));
+  assert.equal(key('P(A \\, \\cup \\; B)'), key('A U B'));
+});
