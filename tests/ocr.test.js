@@ -14,26 +14,37 @@ function renderLines(lines, font, lh, bg, fg) {
   bg = bg || '#fff'; fg = fg || '#000';
   const c = createCanvas(650, lines.length * lh + 50);
   const ctx = c.getContext('2d');
-  ctx.fillStyle = bg; ctx.fillRect(0, 0, c.width, c.height);
-  ctx.fillStyle = fg; ctx.font = font; ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.fillStyle = fg;
+  ctx.font = font;
+  ctx.textBaseline = 'alphabetic';
   lines.forEach((l, i) => ctx.fillText(l, 15, 45 + i * lh));
   return c;
 }
 function renderWithOverline(text, barredIndices, font, barPad) {
   const c = createCanvas(700, 110);
   const ctx = c.getContext('2d');
-  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 700, 110);
-  ctx.fillStyle = '#000'; ctx.font = font; ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, 700, 110);
+  ctx.fillStyle = '#000';
+  ctx.font = font;
+  ctx.textBaseline = 'alphabetic';
   let x = 20; const boxes = [];
   for (const ch of text) {
     const w = ctx.measureText(ch).width;
     if (ch !== ' ') ctx.fillText(ch, x, 65);
-    boxes.push({ x, w }); x += w;
+    boxes.push({ x, w });
+    x += w;
   }
   ctx.lineWidth = 2;
   for (const idx of barredIndices) {
-    const b = boxes[idx]; const pad = barPad == null ? b.w * 0.08 : barPad;
-    ctx.beginPath(); ctx.moveTo(b.x + pad, 30); ctx.lineTo(b.x + b.w - pad, 30); ctx.stroke();
+    const b = boxes[idx];
+    const pad = barPad == null ? b.w * 0.08 : barPad;
+    ctx.beginPath();
+    ctx.moveTo(b.x + pad, 30);
+    ctx.lineTo(b.x + b.w - pad, 30);
+    ctx.stroke();
   }
   return c;
 }
@@ -75,7 +86,10 @@ test('what follows the last "=" is decoded as a number even at tiny sizes', { sk
 test('detailed API returns ordered, non-overlapping pixel bands', { skip }, () => {
   const d = recognizeLinesDetailed(renderLines(HYP, '36px serif', 60), templates, createCanvas);
   assert.equal(d.length, 3);
-  d.forEach((l, i) => { assert.ok(l.bottom > l.top); if (i) assert.ok(l.top > d[i - 1].bottom); });
+  d.forEach((l, i) => {
+    assert.ok(l.bottom > l.top);
+    if (i) assert.ok(l.top > d[i - 1].bottom);
+  });
 });
 
 test('recognized overline text is valid input for the parser', { skip }, () => {
@@ -95,12 +109,28 @@ test('the reported equation: four unions of ABCD, a bar over D, A, B, C respecti
   const text = 'P(ABCD \u222A ABCD \u222A ABCD \u222A ABCD)';
   const barred = [5, 9, 17, 25];
   for (const [font, barY] of [['italic 32px serif', 33], ['italic 36px serif', 30], ['32px serif', 33], ['italic 30px sans-serif', 36], ['italic 28px serif', 38]]) {
-    const c = createCanvas(800, 110); const ctx = c.getContext('2d');
-    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 800, 110); ctx.fillStyle = '#000'; ctx.font = font;
-    let x = 20; const boxes = [];
-    for (const ch of text) { const w = ctx.measureText(ch).width; if (ch !== ' ') ctx.fillText(ch, x, 70); boxes.push({ x, w }); x += w; }
+    const c = createCanvas(800, 110);
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, 800, 110);
+    ctx.fillStyle = '#000';
+    ctx.font = font;
+    let x = 20;
+    const boxes = [];
+    for (const ch of text) {
+      const w = ctx.measureText(ch).width;
+      if (ch !== ' ') ctx.fillText(ch, x, 70);
+      boxes.push({ x, w });
+      x += w;
+    }
     ctx.lineWidth = 2;
-    for (const i of barred) { const b = boxes[i]; ctx.beginPath(); ctx.moveTo(b.x + 1, barY); ctx.lineTo(b.x + b.w - 1, barY); ctx.stroke(); }
+    for (const i of barred) {
+      const b = boxes[i];
+      ctx.beginPath();
+      ctx.moveTo(b.x + 1, barY);
+      ctx.lineTo(b.x + b.w - 1, barY);
+      ctx.stroke();
+    }
     assert.deepEqual(rec(c), ["P(ABCD'UA'BCDUAB'CDUABC'D)"], font);
   }
 });
@@ -116,7 +146,8 @@ async function recognizeFixture(name) {
   const scale = img.width > 1000 ? 1000 / img.width : (img.width < 400 ? Math.min(2, 640 / img.width) : 1);
   const c = createCanvas(Math.round(img.width * scale), Math.round(img.height * scale));
   const ctx = c.getContext('2d');
-  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, c.width, c.height);
   ctx.drawImage(img, 0, 0, c.width, c.height);
   return rec(c);
 }
@@ -144,7 +175,9 @@ test('stacked fractions with subscripts and a barred letter, italic and upright,
     const lh = Math.round(size * 2.3);
     const c = createCanvas(420, FRACTION_LINES.length * lh + 30);
     const ctx = c.getContext('2d');
-    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); ctx.fillStyle = '#000';
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.fillStyle = '#000';
     FRACTION_LINES.forEach(([toks], i) => typeset(ctx, toks, 14, Math.round(size * 1.5) + i * lh, size, style));
     assert.deepEqual(rec(c), FRACTION_LINES.map(l => l[1]), `${style}${size}px`);
   }
