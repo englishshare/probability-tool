@@ -87,7 +87,10 @@ test('parseCanonicalKey inverts canonicalKey', () => {
 });
 
 test('bestFraction recovers small fractions and refuses to guess otherwise', () => {
-  const f = x => { const r = bestFraction(x); return r && `${r.p}/${r.q}${r.exact ? '' : '~'}`; };
+  const f = x => {
+    const r = bestFraction(x);
+    return r && `${r.p}/${r.q}${r.exact ? '' : '~'}`;
+  };
   assert.equal(f(0.875), '7/8');
   assert.equal(f(1 / 3), '1/3');
   assert.equal(f(0.88), '22/25');
