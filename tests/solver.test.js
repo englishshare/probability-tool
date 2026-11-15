@@ -101,8 +101,12 @@ test('venn regions: inferred through the linear model; shared solver covers the 
   // only unions given: the rule solver cannot fill any region, the linear model fills all
   const ctx = ctxOf([[k('A'), .5], [k('B'), .6], [k('A U B'), .8]]);
   const { names, regions } = computeMinterms(['A', 'B'], ctx);
-  const by = {}; regions.forEach(r => { by[r.mask] = r.numeric; });
-  near(by[3], .3); near(by[1], .2); near(by[2], .3); near(by[0], .2);
+  const by = {};
+  regions.forEach(r => { by[r.mask] = r.numeric; });
+  near(by[3], .3);
+  near(by[1], .2);
+  near(by[2], .3);
+  near(by[0], .2);
   assert.deepEqual(consistencyWarnings(names, regions, null), []);
 });
 
