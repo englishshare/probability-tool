@@ -3,7 +3,10 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 let JSDOM, VirtualConsole, createCanvas;
-try { ({ JSDOM, VirtualConsole } = require('jsdom')); ({ createCanvas } = require('canvas')); } catch (e) { JSDOM = null; }
+try {
+  ({ JSDOM, VirtualConsole } = require('jsdom'));
+  ({ createCanvas } = require('canvas'));
+} catch (e) { JSDOM = null; }
 const skip = JSDOM ? false : 'packages "jsdom" and "canvas" not installed (run npm install)';
 
 const { loadModules } = require('./helpers/load');
@@ -32,8 +35,15 @@ async function boot(hash) {
   return { dom, window, doc, errors, $: id => doc.getElementById(id) };
 }
 function pathToUrl(p) { return 'file://' + p.split(path.sep).join('/'); }
-const clickAdd = ($, expr, val) => { $('hypExpr').value = expr; $('hypValue').value = val; $('addHypBtn').click(); };
-const answerSrc = $ => { const el = $('resultsBody').querySelector('.result-answer'); return el ? el.getAttribute('data-katex-src') : null; };
+const clickAdd = ($, expr, val) => {
+  $('hypExpr').value = expr;
+  $('hypValue').value = val;
+  $('addHypBtn').click();
+};
+const answerSrc = $ => {
+  const el = $('resultsBody').querySelector('.result-answer');
+  return el ? el.getAttribute('data-katex-src') : null;
+};
 
 test('boots with the default example, ARIA tabs, an empty results state and no script errors', { skip }, async () => {
   const { $, doc, errors } = await boot();
@@ -85,20 +95,36 @@ test('value validation: range, fractions, update-in-place, garbage', { skip }, a
   const rows = () => doc.querySelectorAll('#hypothesesList .hyp-row').length;
   const err = () => ($('hypError').hidden ? '' : $('hypError').textContent);
 
-  clickAdd($, 'A', '3/8'); assert.equal(rows(), 1); assert.equal(err(), '');
-  clickAdd($, 'B', '3 / 8'); assert.equal(rows(), 2);
-  clickAdd($, 'C', '0'); clickAdd($, 'D', '1'); assert.equal(rows(), 4);
-  clickAdd($, 'E', '1.5'); assert.match(err(), /\[0, 1\]/); assert.equal(rows(), 4);
-  clickAdd($, 'E', '-0.2'); assert.match(err(), /\[0, 1\]/);
-  clickAdd($, 'E', '5/3'); assert.match(err(), /\[0, 1\]/);
-  clickAdd($, 'E', '1/0'); assert.match(err(), /phân số/);
-  clickAdd($, 'E', 'abc'); assert.match(err(), /phân số/);
-  clickAdd($, 'E', ''); assert.match(err(), /cả biểu thức và giá trị/);
-  clickAdd($, 'A', '0.5'); assert.equal(rows(), 4, 'same expression updates instead of duplicating');
+  clickAdd($, 'A', '3/8');
+  assert.equal(rows(), 1);
+  assert.equal(err(), '');
+  clickAdd($, 'B', '3 / 8');
+  assert.equal(rows(), 2);
+  clickAdd($, 'C', '0');
+  clickAdd($, 'D', '1');
+  assert.equal(rows(), 4);
+  clickAdd($, 'E', '1.5');
+  assert.match(err(), /\[0, 1\]/);
+  assert.equal(rows(), 4);
+  clickAdd($, 'E', '-0.2');
+  assert.match(err(), /\[0, 1\]/);
+  clickAdd($, 'E', '5/3');
+  assert.match(err(), /\[0, 1\]/);
+  clickAdd($, 'E', '1/0');
+  assert.match(err(), /phân số/);
+  clickAdd($, 'E', 'abc');
+  assert.match(err(), /phân số/);
+  clickAdd($, 'E', '');
+  assert.match(err(), /cả biểu thức và giá trị/);
+  clickAdd($, 'A', '0.5');
+  assert.equal(rows(), 4, 'same expression updates instead of duplicating');
   assert.match(doc.querySelector('#hypothesesList .hyp-eq').getAttribute('data-katex-src'), /0\.5$/);
   // "P(A)=0.6" typed whole into the expression box is split automatically
-  $('hypExpr').value = 'P(F)=0.6'; $('hypValue').value = ''; $('addHypBtn').click();
-  assert.equal(rows(), 5); assert.equal(err(), '');
+  $('hypExpr').value = 'P(F)=0.6';
+  $('hypValue').value = '';
+  $('addHypBtn').click();
+  assert.equal(rows(), 5);
+  assert.equal(err(), '');
 });
 
 test('contradictory facts are refused with a reason; consistent ones are accepted', { skip }, async () => {
@@ -106,12 +132,19 @@ test('contradictory facts are refused with a reason; consistent ones are accepte
   $('clearHypBtn').click();
   const rows = () => doc.querySelectorAll('#hypothesesList .hyp-row').length;
   const err = () => ($('hypError').hidden ? '' : $('hypError').textContent);
-  clickAdd($, 'A', '0.2'); assert.equal(rows(), 1);
-  clickAdd($, 'A n B', '0.4'); assert.equal(rows(), 1, 'P(A∩B) > P(A) must be refused');
-  assert.match(err(), /mâu thuẫn/); assert.match(err(), /âm/);
-  clickAdd($, 'A n B', '0.1'); assert.equal(rows(), 2); assert.equal(err(), '');
-  clickAdd($, 'A U B', '0.1'); assert.equal(rows(), 2, 'P(A∪B) < P(A) must be refused');
-  clickAdd($, 'B', '0.3'); clickAdd($, 'A U B', '0.9');
+  clickAdd($, 'A', '0.2');
+  assert.equal(rows(), 1);
+  clickAdd($, 'A n B', '0.4');
+  assert.equal(rows(), 1, 'P(A∩B) > P(A) must be refused');
+  assert.match(err(), /mâu thuẫn/);
+  assert.match(err(), /âm/);
+  clickAdd($, 'A n B', '0.1');
+  assert.equal(rows(), 2);
+  assert.equal(err(), '');
+  clickAdd($, 'A U B', '0.1');
+  assert.equal(rows(), 2, 'P(A∪B) < P(A) must be refused');
+  clickAdd($, 'B', '0.3');
+  clickAdd($, 'A U B', '0.9');
   assert.equal(rows(), 3, 'inconsistent inclusion-exclusion data must be refused');
 });
 
